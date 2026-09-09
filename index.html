@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Quantum XR — Young's Double Slit & Wave-Particle Duality Lab</title>
+    <meta name="description" content="Interactive 3D WebXR Quantum Physics Laboratory simulating Young's Double Slit Experiment, wavefunction collapse, and which-way detection.">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <!-- Import Map for Three.js ES Modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <link rel="stylesheet" href="./style.css">
+</head>
+
+<body>
+
+    <!-- Loading Overlay -->
+    <div id="loading" class="loading-container">
+        <div class="loading-spinner"></div>
+        <div class="loading-title">QUANTUM XR</div>
+        <div class="loading-subtitle">Initializing 3D Physics Laboratory...</div>
+        <div class="loading-progress-bar"><div id="loading-progress" class="loading-progress-fill"></div></div>
+    </div>
+
+    <!-- Main UI HUD Overlay -->
+    <div id="hud" class="hud-layer">
+        
+        <!-- Top Bar: Lab Header & Status -->
+        <header class="top-bar glass-card">
+            <div class="brand">
+                <div class="brand-badge">
+                    <span class="pulse-dot"></span>
+                    <span class="brand-text">QUANTUM XR</span>
+                </div>
+                <h1 class="lab-title">Young's Double Slit Experiment</h1>
+            </div>
+
+            <div class="telemetry-bar">
+                <div class="stat-pill" id="stat-state">
+                    <span class="stat-label">STATE</span>
+                    <span class="stat-value state-wave" id="val-quantum-state">WAVE SUPERPOSITION</span>
+                </div>
+                <div class="stat-pill">
+                    <span class="stat-label">HITS</span>
+                    <span class="stat-value font-mono" id="val-hit-count">0</span>
+                </div>
+                <div class="stat-pill">
+                    <span class="stat-label">DETECTOR</span>
+                    <span class="stat-value font-mono text-inactive" id="val-detector-status">OFF (Unobserved)</span>
+                </div>
+            </div>
+
+            <div class="top-actions">
+                <button id="btn-sound-toggle" class="icon-btn" title="Toggle Lab Audio" aria-label="Toggle Audio">
+                    <svg id="icon-sound-on" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                    <svg id="icon-sound-off" class="hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
+                </button>
+                <button id="btn-guide-toggle" class="icon-btn" title="Quantum Physics Theory & Guide" aria-label="Theory Guide">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Camera Preset Selector -->
+        <div class="view-preset-bar glass-card">
+            <span class="preset-label">VIEW:</span>
+            <button class="view-btn active" data-view="overview">Lab Overview</button>
+            <button class="view-btn" data-view="console">Console Desk</button>
+            <button class="view-btn" data-view="slits">Double Slits</button>
+            <button class="view-btn" data-view="detector">Detector</button>
+            <button class="view-btn" data-view="screen">Screen Target</button>
+            <button class="view-btn" data-view="side">Side Profile</button>
+        </div>
+
+        <!-- Left Dock: Realtime Intensity Distribution Graph -->
+        <aside class="intensity-panel glass-card" id="intensity-panel">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                    <span>Intensity Distribution $I(y)$</span>
+                </div>
+                <button id="btn-collapse-graph" class="mini-btn" title="Toggle Graph" aria-label="Toggle Graph">_</button>
+            </div>
+            
+            <div class="graph-container">
+                <canvas id="intensity-canvas" width="340" height="180"></canvas>
+                <div class="graph-legend">
+                    <span class="legend-item"><span class="legend-color cyan"></span> Measured Screen Hits</span>
+                    <span class="legend-item"><span class="legend-color pink"></span> Theoretical $\psi^*\psi$</span>
+                </div>
+            </div>
+
+            <div class="formula-box font-mono">
+                <div id="formula-display">I(y) = I₀ cos²(πdy / λD) · sinc²(πay / λD)</div>
+                <div class="fringe-calc">Fringe Width β = <span id="val-fringe-width">0.36</span> mm</div>
+            </div>
+        </aside>
+
+        <!-- Bottom Control Console Floating Dock -->
+        <div class="control-dock glass-card">
+            
+            <!-- Quick Action Buttons -->
+            <div class="control-row action-buttons">
+                <button id="ui-btn-emitter" class="action-btn btn-power active" title="Toggle Emitter (Space)">
+                    <span class="btn-icon">⚡</span>
+                    <div class="btn-text">
+                        <span class="btn-title">EMITTER</span>
+                        <span class="btn-status" id="ui-status-emitter">ACTIVE</span>
+                    </div>
+                </button>
+
+                <button id="ui-btn-detector" class="action-btn btn-detector" title="Toggle Which-Way Detector (D)">
+                    <span class="btn-icon">👁️</span>
+                    <div class="btn-text">
+                        <span class="btn-title">DETECTOR</span>
+                        <span class="btn-status" id="ui-status-detector">OFF (Wave)</span>
+                    </div>
+                </button>
+
+                <button id="ui-btn-reset" class="action-btn btn-reset" title="Clear Screen Impacts (R)">
+                    <span class="btn-icon">↺</span>
+                    <div class="btn-text">
+                        <span class="btn-title">CLEAR</span>
+                        <span class="btn-status">Screen Data</span>
+                    </div>
+                </button>
+            </div>
+
+            <!-- Parameters Sliders & Modes -->
+            <div class="control-row sliders-grid">
+                
+                <!-- Particle Mode -->
+                <div class="slider-group mode-toggle-group">
+                    <label class="slider-label">Beam Mode</label>
+                    <div class="toggle-pill">
+                        <button class="pill-btn active" id="mode-stream">Continuous Stream</button>
+                        <button class="pill-btn" id="mode-single">Single Particle</button>
+                    </div>
+                </div>
+
+                <!-- Emission Rate -->
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <label for="slider-rate" class="slider-label">Particle Rate</label>
+                        <span class="slider-value font-mono" id="val-rate">60 /s</span>
+                    </div>
+                    <input type="range" id="slider-rate" min="5" max="250" step="5" value="60">
+                </div>
+
+                <!-- Wavelength / Quantum Energy -->
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <label for="slider-wavelength" class="slider-label">Wavelength (λ)</label>
+                        <span class="slider-value font-mono" id="val-wavelength">500 nm</span>
+                    </div>
+                    <input type="range" id="slider-wavelength" min="380" max="750" step="10" value="500">
+                </div>
+
+                <!-- Slit Separation -->
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <label for="slider-slit-dist" class="slider-label">Slit Separation (d)</label>
+                        <span class="slider-value font-mono" id="val-slit-dist">0.28 mm</span>
+                    </div>
+                    <input type="range" id="slider-slit-dist" min="0.14" max="0.60" step="0.02" value="0.28">
+                </div>
+
+            </div>
+
+            <!-- 3D Scene Click Instructions / WebXR Hint -->
+            <div class="dock-footer">
+                <div class="hint-text">
+                    💡 <span class="highlight">Click 3D buttons</span> on the bench console or use WebXR VR controllers to interact directly!
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- Quantum Physics Theory & Guide Modal -->
+    <div id="modal-guide" class="modal-backdrop hidden">
+        <div class="modal-card glass-card">
+            <div class="modal-header">
+                <h2>Quantum Mechanics: Wave-Particle Duality</h2>
+                <button id="btn-close-modal" class="close-btn" aria-label="Close modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <section class="guide-section">
+                    <h3>1. The Classical Paradox (Wave Behavior)</h3>
+                    <p>
+                        When electrons or photons pass through two slits without being observed, each quantum entity exhibits wave properties. 
+                        Its probability wavefunction $\psi$ passes through <strong>both slits simultaneously</strong>, causing constructive and destructive interference:
+                    </p>
+                    <div class="math-callout">
+                        $$I(y) \propto |\psi_1 + \psi_2|^2 = |\psi_1|^2 + |\psi_2|^2 + 2\text{Re}(\psi_1^*\psi_2)$$
+                    </div>
+                    <p>This creates alternating bright and dark interference fringes on the phosphor detection screen.</p>
+                </section>
+
+                <section class="guide-section">
+                    <h3>2. The Quantum Measurement Problem (Detector ON)</h3>
+                    <p>
+                        When we place a "which-way" detector at the slits to observe which slit the particle went through, the quantum superposition collapses into an eigenstate (wavefunction collapse):
+                    </p>
+                    <div class="math-callout">
+                        $$I_{\text{observed}}(y) = |\psi_1|^2 + |\psi_2|^2$$
+                    </div>
+                    <p>
+                        The interference cross-term $2\text{Re}(\psi_1^*\psi_2)$ completely vanishes! The particles behave strictly as classical bullets, forming <strong>two separate localized clumps</strong> on the screen directly behind each slit.
+                    </p>
+                </section>
+
+                <section class="guide-section">
+                    <h3>3. How to use this Laboratory</h3>
+                    <ul>
+                        <li><strong>⚡ Emitter Button</strong>: Turns the quantum electron beam on or off.</li>
+                        <li><strong>👁️ Detector Button</strong>: Turns the "which-way" observer on or off to watch the quantum collapse happen live.</li>
+                        <li><strong>↺ Clear Button</strong>: Clears accumulated phosphor screen hits to start a fresh measurement run.</li>
+                        <li><strong>Wavelength (λ) & Slit Separation (d)</strong>: Adjust physical parameters to observe how fringe spacing $\beta = \frac{\lambda D}{d}$ expands and contracts in real time.</li>
+                        <li><strong>VR Mode</strong>: Click "Enter VR" below to step directly onto the laboratory floor in full 6DoF Virtual Reality!</li>
+                    </ul>
+                </section>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-modal-got-it" class="primary-btn">Enter Laboratory</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3D Tooltip for Hovering on 3D Objects -->
+    <div id="tooltip-3d" class="tooltip-3d"></div>
+
+    <!-- Application Entry Script -->
+    <script type="module" src="./main.js"></script>
+
+</body>
+
+</html>
