@@ -1,0 +1,25 @@
+{
+  "name": "quantum-xr-ydse",
+  "version": "1.0.0",
+  "description": "Quantum XR — Young's Double Slit Experiment WebXR Simulation",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "serve": "node server.js"
+  },
+  "keywords": [
+    "webxr",
+    "threejs",
+    "quantum-physics",
+    "ydse",
+    "double-slit",
+    "meta-quest"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "serve": "^14.2.4",
+    "three": "^0.185.1"
+  }
+}
