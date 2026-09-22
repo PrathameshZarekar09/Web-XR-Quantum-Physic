@@ -1,0 +1,9 @@
+{
+  "name": "quantum-xr",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix WebXR run dev",
+    "start": "npm --prefix WebXR start"
+  }
+}

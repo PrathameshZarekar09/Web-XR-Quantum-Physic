@@ -68,6 +68,21 @@ function handleRequest(req, res) {
     });
 }
 
+const os = require('os');
+
+function getLocalIpAddresses() {
+    const interfaces = os.networkInterfaces();
+    const addresses = [];
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            if (iface.family === 'IPv4' && !iface.internal) {
+                addresses.push({ name, ip: iface.address });
+            }
+        }
+    }
+    return addresses;
+}
+
 // Start HTTPS Server
 let httpsServer = null;
 try {
@@ -78,9 +93,12 @@ try {
 
     httpsServer = https.createServer(sslOptions, handleRequest);
     httpsServer.listen(PORT_HTTPS, '0.0.0.0', () => {
+        const ips = getLocalIpAddresses();
+        const wifiIp = ips.find(i => i.name.toLowerCase().includes('wi-fi') || i.name.toLowerCase().includes('wireless'))?.ip || ips[0]?.ip || '192.168.68.158';
+
         console.log('\n======================================================');
         console.log('🔒 HTTPS WebXR Server Ready for Meta Quest 3S:');
-        console.log(`   👉 Quest Browser URL: https://192.168.68.125:${PORT_HTTPS}`);
+        console.log(`   👉 Quest Browser URL: https://${wifiIp}:${PORT_HTTPS}`);
         console.log(`   👉 Desktop URL:       https://localhost:${PORT_HTTPS}`);
         console.log('======================================================\n');
     });

@@ -18,6 +18,8 @@ const state = {
     totalHits: 0,
     audioEnabled: false,
     audioMuted: false,
+    userScale: 1.45,       // Scale multiplier for user / avatar vs experiment
+    userHeightOffset: 0.85, // Height offset in meters to bring Quest 3S eyes to natural lab bench eye-level
     histogramBins: 120,
     hitHistogram: new Array(120).fill(0),
     maxHistCount: 1,
@@ -191,10 +193,10 @@ scene.background = new THREE.Color(0x0a0f1d);
 scene.fog = new THREE.FogExp2(0x0a0f1d, 0.025);
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.05, 100);
-camera.position.set(0, 2.5, 5.2);
+camera.position.set(0, 2.7, 5.4);
 
 const xrRig = new THREE.Group();
-xrRig.position.set(0, 0, 3.8); // Optimal VR viewpoint: standing facing the entire optical bench and console
+xrRig.position.set(0, state.userHeightOffset, 3.8); // Optimal VR viewpoint: elevated eye-level with the optical bench
 scene.add(xrRig);
 xrRig.add(camera);
 
@@ -210,7 +212,7 @@ document.body.appendChild(renderer.domElement);
 
 // Reset XR Rig when entering VR session
 renderer.xr.addEventListener('sessionstart', () => {
-    xrRig.position.set(0, 0, 3.8);
+    xrRig.position.set(0, state.userHeightOffset, 3.8);
     xrRig.rotation.set(0, 0, 0);
 });
 
@@ -220,7 +222,7 @@ document.body.appendChild(vrBtn);
 
 // Orbit Controls
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.8, 0);
+controls.target.set(0, 2.2, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
 controls.maxPolarAngle = Math.PI / 2 - 0.02; // prevent going below floor
@@ -873,186 +875,52 @@ const teleportStations = {
         id: 'overview',
         name: 'Lab Overview',
         vrPos: new THREE.Vector3(0, 0, 5.2),
-        camPos: new THREE.Vector3(0, 2.5, 5.2),
-        target: new THREE.Vector3(0, 1.8, 0),
-        avatarPos: new THREE.Vector3(0, 0, 4.2),
-        avatarLookAt: new THREE.Vector3(0, 1.8, 0)
+        camPos: new THREE.Vector3(0, 2.7, 5.4),
+        target: new THREE.Vector3(0, 2.2, 0)
     },
     console: {
         id: 'console',
         name: 'Console Desk',
         vrPos: new THREE.Vector3(-1.5, 0, 3.4),
-        camPos: new THREE.Vector3(-1.5, 2.1, 3.2),
-        target: new THREE.Vector3(-1.5, 1.6, 0.5),
-        avatarPos: new THREE.Vector3(-1.5, 0, 3.2),
-        avatarLookAt: new THREE.Vector3(-1.5, 1.8, 0)
+        camPos: new THREE.Vector3(-1.5, 2.3, 3.2),
+        target: new THREE.Vector3(-1.5, 2.0, 0.5)
     },
     slits: {
         id: 'slits',
         name: 'Double Slits Close-Up',
         vrPos: new THREE.Vector3(0, 0, 1.3),
-        camPos: new THREE.Vector3(0.3, 2.8, 1.6),
-        target: new THREE.Vector3(0, 2.7, 0),
-        avatarPos: new THREE.Vector3(0.8, 0, 1.4),
-        avatarLookAt: new THREE.Vector3(0, 2.7, 0)
+        camPos: new THREE.Vector3(0.3, 2.9, 1.6),
+        target: new THREE.Vector3(0, 2.7, 0)
     },
     emitter: {
         id: 'emitter',
         name: 'Quantum Emitter Gun',
         vrPos: new THREE.Vector3(-3.8, 0, 1.6),
-        camPos: new THREE.Vector3(-3.6, 2.3, 2.2),
-        target: new THREE.Vector3(-4.5, 2.1, 0),
-        avatarPos: new THREE.Vector3(-3.6, 0, 1.6),
-        avatarLookAt: new THREE.Vector3(-4.5, 2.1, 0)
+        camPos: new THREE.Vector3(-3.6, 2.5, 2.2),
+        target: new THREE.Vector3(-4.5, 2.2, 0)
     },
     detector: {
         id: 'detector',
         name: 'Which-Way Detector',
         vrPos: new THREE.Vector3(2.6, 0, 1.4),
-        camPos: new THREE.Vector3(2.5, 2.4, 1.5),
-        target: new THREE.Vector3(3.0, 2.1, 0),
-        avatarPos: new THREE.Vector3(2.3, 0, 1.5),
-        avatarLookAt: new THREE.Vector3(3.0, 2.1, 0)
+        camPos: new THREE.Vector3(2.5, 2.6, 1.5),
+        target: new THREE.Vector3(3.0, 2.3, 0)
     },
     screen: {
         id: 'screen',
         name: 'Phosphor Screen Target',
         vrPos: new THREE.Vector3(4.5, 0, 1.4),
-        camPos: new THREE.Vector3(4.2, 2.7, 0.8),
-        target: new THREE.Vector3(5.3, 2.7, 0),
-        avatarPos: new THREE.Vector3(4.4, 0, 1.3),
-        avatarLookAt: new THREE.Vector3(5.3, 2.7, 0)
+        camPos: new THREE.Vector3(4.2, 2.9, 0.8),
+        target: new THREE.Vector3(5.3, 2.7, 0)
     },
     side: {
         id: 'side',
         name: 'Side Profile',
         vrPos: new THREE.Vector3(0.5, 0, 4.8),
-        camPos: new THREE.Vector3(0.5, 2.2, 4.8),
-        target: new THREE.Vector3(0.5, 2.0, 0),
-        avatarPos: new THREE.Vector3(1.5, 0, 4.5),
-        avatarLookAt: new THREE.Vector3(0, 2.0, 0)
+        camPos: new THREE.Vector3(0.5, 2.5, 4.8),
+        target: new THREE.Vector3(0.5, 2.2, 0)
     }
 };
-
-// =============================================================================
-// 3D SCIENTIST / RESEARCHER AVATAR
-// =============================================================================
-let scientistAvatar = null;
-const avatarState = {
-    currentPos: new THREE.Vector3(0, 0, 4.2),
-    targetPos: new THREE.Vector3(0, 0, 4.2),
-    targetRotationY: 0
-};
-
-function createScientistAvatar() {
-    const avatar = new THREE.Group();
-    avatar.position.copy(avatarState.currentPos);
-
-    // 1. Materials
-    const suitMat = new THREE.MeshStandardMaterial({
-        color: 0x1e293b,
-        roughness: 0.4,
-        metalness: 0.2
-    });
-    const coatMat = new THREE.MeshStandardMaterial({
-        color: 0xf8fafc,
-        roughness: 0.6,
-        metalness: 0.1
-    });
-    const visorMat = new THREE.MeshBasicMaterial({
-        color: 0x00f0ff,
-        transparent: true,
-        opacity: 0.95
-    });
-    const glowCyanMat = new THREE.MeshBasicMaterial({
-        color: 0x00f0ff,
-        blending: THREE.AdditiveBlending
-    });
-    const padScreenMat = new THREE.MeshBasicMaterial({
-        color: 0x00ff88,
-        blending: THREE.AdditiveBlending
-    });
-
-    // 2. Head & Helmet / Visor
-    const headGroup = new THREE.Group();
-    headGroup.position.set(0, 1.62, 0);
-
-    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 16), suitMat);
-    helmet.scale.set(0.9, 1.05, 0.95);
-    headGroup.add(helmet);
-
-    const visor = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.07, 16, 1, false, -Math.PI / 3, Math.PI * 0.66), visorMat);
-    visor.rotation.x = Math.PI / 2;
-    visor.position.set(0, 0.02, 0.08);
-    headGroup.add(visor);
-
-    // Earpieces
-    [-0.13, 0.13].forEach(x => {
-        const ear = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.02, 12), glowCyanMat);
-        ear.rotation.z = Math.PI / 2;
-        ear.position.set(x, 0.02, 0);
-        headGroup.add(ear);
-    });
-    avatar.add(headGroup);
-
-    // 3. Torso & Lab Coat
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.55, 0.22), coatMat);
-    torso.position.set(0, 1.25, 0);
-    avatar.add(torso);
-
-    // Quantum Reactor Core Badge on chest
-    const chestCore = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.02, 16), glowCyanMat);
-    chestCore.rotation.x = Math.PI / 2;
-    chestCore.position.set(0, 1.35, 0.12);
-    avatar.add(chestCore);
-
-    // 4. Arms & Quantum Datapad
-    const armGeo = new THREE.CylinderGeometry(0.05, 0.045, 0.42, 12);
-
-    // Left Arm
-    const leftArm = new THREE.Mesh(armGeo, coatMat);
-    leftArm.position.set(-0.25, 1.15, 0.12);
-    leftArm.rotation.x = -Math.PI / 4;
-    leftArm.rotation.z = -Math.PI / 16;
-    avatar.add(leftArm);
-
-    // Right Arm
-    const rightArm = new THREE.Mesh(armGeo, coatMat);
-    rightArm.position.set(0.25, 1.15, 0.12);
-    rightArm.rotation.x = -Math.PI / 4;
-    rightArm.rotation.z = Math.PI / 16;
-    avatar.add(rightArm);
-
-    // Quantum Datapad (holding in hands)
-    const datapad = new THREE.Group();
-    datapad.position.set(0, 1.05, 0.28);
-    datapad.rotation.x = -Math.PI / 4;
-
-    const padBody = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.18, 0.012), suitMat);
-    const padScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.23, 0.15), padScreenMat);
-    padScreen.position.z = 0.008;
-    datapad.add(padBody);
-    datapad.add(padScreen);
-    avatar.add(datapad);
-
-    // 5. Legs & Boots
-    const legGeo = new THREE.CylinderGeometry(0.065, 0.06, 0.65, 12);
-    [-0.11, 0.11].forEach(x => {
-        const leg = new THREE.Mesh(legGeo, suitMat);
-        leg.position.set(x, 0.55, 0);
-        avatar.add(leg);
-
-        const boot = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.2), suitMat);
-        boot.position.set(x, 0.08, 0.04);
-        avatar.add(boot);
-    });
-
-    avatar.userData = { isAvatar: true, label: 'Observer (Quantum Researcher)' };
-    scene.add(avatar);
-    scientistAvatar = avatar;
-    return avatar;
-}
-createScientistAvatar();
 
 // =============================================================================
 // HOLOGRAPHIC TELEPORTATION PADS
@@ -1173,8 +1041,8 @@ function teleportToStation(stationId) {
     audio.playTeleportSound();
 
     if (renderer.xr.isPresenting) {
-        // VR Teleportation: smoothly position user rig
-        xrRig.position.copy(station.vrPos);
+        // VR Teleportation: smoothly position user rig with elevated eye level
+        xrRig.position.set(station.vrPos.x, state.userHeightOffset, station.vrPos.z);
         const lookDir = new THREE.Vector3().subVectors(station.target, station.vrPos);
         xrRig.rotation.y = Math.atan2(-lookDir.x, -lookDir.z);
     } else {
@@ -1187,15 +1055,6 @@ function teleportToStation(stationId) {
 
         camTransitionProgress = 0;
         isCameraTransitioning = true;
-    }
-
-    // Move Scientist Avatar to station
-    if (scientistAvatar) {
-        avatarState.targetPos.copy(station.avatarPos);
-        const lookVector = new THREE.Vector3().subVectors(station.avatarLookAt, station.avatarPos);
-        avatarState.targetRotationY = Math.atan2(lookVector.x, lookVector.z);
-    }
-
     // Update active UI view button in HUD
     document.querySelectorAll('.view-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.view === stationId);
@@ -1224,9 +1083,8 @@ function updateCameraTransition(delta) {
     }
 }
 
-// Update Avatar & Teleport Pads in Loop
-function updateAvatarAndPads(delta, elapsedTime) {
-    // 1. Animate Teleportation Pads (pulse & rotation)
+// Update Holographic Teleport Pads in Loop
+function updateTeleportPads(delta, elapsedTime) {
     animatedPads.forEach((pad, idx) => {
         pad.ring.rotation.z += delta * 0.4;
         const pulse = 0.35 + Math.sin(elapsedTime * 3.0 + idx) * 0.15;
@@ -1234,17 +1092,6 @@ function updateAvatarAndPads(delta, elapsedTime) {
         pad.beam.material.opacity = 0.10 + Math.sin(elapsedTime * 2.5 + idx) * 0.05;
         pad.badge.position.y = pad.baseY + Math.sin(elapsedTime * 2.0 + idx) * 0.04;
     });
-
-    // 2. Animate Scientist Avatar
-    if (scientistAvatar) {
-        // Smoothly interpolate position & rotation
-        scientistAvatar.position.lerp(avatarState.targetPos, delta * 4.0);
-        scientistAvatar.rotation.y = THREE.MathUtils.lerp(scientistAvatar.rotation.y, avatarState.targetRotationY, delta * 5.0);
-
-        // Subtle breathing & datapad bob
-        const breathe = Math.sin(elapsedTime * 2.2) * 0.012;
-        scientistAvatar.children[0].position.y = 1.62 + breathe; // head
-    }
 }
 
 // =============================================================================
@@ -1429,6 +1276,17 @@ function handleVRMovement(delta) {
                 xrRig.rotateY(angle);
                 snapTurnCooldown = 0.35;
             }
+
+            // Right Stick Y: Smooth User Height / Scale Calibration in VR
+            if (Math.abs(stickY) > 0.25) {
+                state.userHeightOffset = Math.max(-0.2, Math.min(2.2, state.userHeightOffset - stickY * delta * 1.2));
+                xrRig.position.y = state.userHeightOffset;
+                state.userScale = 1.0 + (state.userHeightOffset / 1.88);
+                const sliderScale = document.getElementById('slider-user-scale');
+                const valScale = document.getElementById('val-user-scale');
+                if (sliderScale) sliderScale.value = state.userScale.toFixed(2);
+                if (valScale) valScale.textContent = `${state.userScale.toFixed(2)}x (+${state.userHeightOffset.toFixed(2)}m)`;
+            }
         }
     }
 }
@@ -1507,6 +1365,18 @@ function initUIBindings() {
         document.getElementById('val-slit-dist').textContent = `${state.slitSeparation.toFixed(2)} mm`;
         updateVisualState();
     });
+
+    const scaleSlider = document.getElementById('slider-user-scale');
+    scaleSlider?.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        state.userScale = val;
+        state.userHeightOffset = (val - 1.0) * 1.88;
+        document.getElementById('val-user-scale').textContent = `${val.toFixed(2)}x (+${state.userHeightOffset.toFixed(2)}m)`;
+
+        if (renderer.xr.isPresenting) {
+            xrRig.position.y = state.userHeightOffset;
+        }
+    });
 }
 initUIBindings();
 updateVisualState();
@@ -1545,8 +1415,8 @@ renderer.setAnimationLoop(() => {
     // 3. Dynamic Particle Simulation
     updateParticles(delta);
 
-    // 4. Animate Holographic Teleport Pads & Scientist Avatar
-    updateAvatarAndPads(delta, elapsedTime);
+    // 4. Animate Holographic Teleport Pads
+    updateTeleportPads(delta, elapsedTime);
 
     // 5. Subtle Ambient Pulsing Lights
     if (state.emitterActive) {
