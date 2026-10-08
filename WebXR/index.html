@@ -4,20 +4,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Quantum XR — Young's Double Slit & Wave-Particle Duality Lab</title>
-    <meta name="description" content="Interactive 3D WebXR Quantum Physics Laboratory simulating Young's Double Slit Experiment, wavefunction collapse, and which-way detection.">
+    <title>Quantum XR — Young's Double Slit & Wave-Particle Duality Platform</title>
+    <meta name="description" content="Interactive 3D WebXR Quantum Physics Platform simulating Young's Double Slit Experiment, wavefunction collapse, and comprehensive quantum theory.">
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <!-- Import Map for Three.js ES Modules -->
+    <!-- Import Map for Three.js ES Modules (Local High-Speed Delivery) -->
     <script type="importmap">
     {
         "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+            "three": "./node_modules/three/build/three.module.js",
+            "three/addons/": "./node_modules/three/examples/jsm/"
         }
     }
     </script>
@@ -25,32 +25,311 @@
     <link rel="stylesheet" href="./style.css">
 </head>
 
-<body>
+<body class="app-mode-portal">
 
-    <!-- Loading Overlay -->
-    <div id="loading" class="loading-container">
-        <div class="loading-spinner"></div>
-        <div class="loading-title">QUANTUM XR</div>
-        <div class="loading-subtitle">Initializing 3D Physics Laboratory...</div>
-        <div class="loading-progress-bar"><div id="loading-progress" class="loading-progress-fill"></div></div>
-    </div>
+    <!-- Global Top Navigation Bar -->
+    <nav class="global-navbar glass-card">
+        <div class="nav-brand" id="nav-brand-home" role="button" tabindex="0" title="Return to Hub Portal">
+            <div class="brand-badge">
+                <span class="pulse-dot"></span>
+                <span class="brand-text">QUANTUM XR</span>
+            </div>
+            <span class="nav-subtitle">Physics Suite</span>
+        </div>
 
-    <!-- Main UI HUD Overlay -->
-    <div id="hud" class="hud-layer">
+        <!-- Central View Switcher Tabs -->
+        <div class="nav-tabs" role="tablist" aria-label="Section Selector">
+            <button id="nav-tab-portal" class="nav-tab-btn active" role="tab" aria-selected="true" title="Portal Selection Hub">
+                <span class="tab-icon">🏠</span>
+                <span class="tab-label">Hub</span>
+            </button>
+            <button id="nav-tab-experiment" class="nav-tab-btn" role="tab" aria-selected="false" title="Interactive 3D WebXR Experiment">
+                <span class="tab-icon">🔬</span>
+                <span class="tab-label">Experiments</span>
+                <span class="badge-3d">3D/VR</span>
+            </button>
+            <button id="nav-tab-theory" class="nav-tab-btn" role="tab" aria-selected="false" title="Comprehensive Quantum Theory">
+                <span class="tab-icon">📚</span>
+                <span class="tab-label">Theory</span>
+            </button>
+        </div>
+
+        <!-- Right Quick Actions -->
+        <div class="nav-actions">
+            <button id="btn-sound-toggle" class="icon-btn" title="Toggle Lab Audio Synthesizer" aria-label="Toggle Audio">
+                <svg id="icon-sound-on" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                <svg id="icon-sound-off" class="hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
+            </button>
+            <button id="btn-guide-toggle" class="icon-btn" title="Quick Laboratory Guide" aria-label="Quick Guide">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            </button>
+        </div>
+    </nav>
+
+    <!-- ===================================================================== -->
+    <!-- 1. ENTRANCE PORTAL VIEW (Main Selection Hub)                          -->
+    <!-- ===================================================================== -->
+    <div id="portal-view" class="portal-container active">
         
-        <!-- Top Bar: Lab Header & Status -->
-        <header class="top-bar glass-card">
-            <div class="brand">
-                <div class="brand-badge">
-                    <span class="pulse-dot"></span>
-                    <span class="brand-text">QUANTUM XR</span>
+        <!-- Portal Hero Header -->
+        <header class="portal-header">
+            <div class="portal-tag">
+                <span class="tag-glow"></span>
+                <span>WEBXR QUANTUM PHYSICS PLATFORM</span>
+            </div>
+            <h1 class="portal-main-title">Wave-Particle Duality & Quantum Mechanics</h1>
+            <p class="portal-main-desc">
+                Select your pathway to explore the mysteries of quantum reality. Immerse yourself in a real-time 3D/VR laboratory simulating Young's Double Slit Experiment, or master the foundational physics with interactive theoretical modules.
+            </p>
+        </header>
+
+        <!-- Two Primary Section Options -->
+        <div class="portal-cards-grid">
+            
+            <!-- OPTION 1: EXPERIMENTS -->
+            <div class="portal-card glass-card card-experiment" id="portal-card-experiment">
+                <div class="card-glow-overlay"></div>
+                <div class="card-badge-row">
+                    <span class="pill-badge pill-cyan">⚡ 3D & VR SIMULATION</span>
+                    <span class="pill-badge pill-green">WebXR 6DoF</span>
                 </div>
-                <h1 class="lab-title">Young's Double Slit Experiment</h1>
+
+                <div class="card-icon-wrapper">
+                    <div class="card-icon cyan-glow">🔬</div>
+                </div>
+
+                <h2 class="card-title">Experiments Lab</h2>
+                <h3 class="card-subtitle">Young's Double Slit & Observer Simulation</h3>
+                
+                <p class="card-description">
+                    Step onto the optical laboratory bench. Fire continuous or single electron streams, adjust physical slit separations and wavelengths, toggle which-way observers to trigger wavefunction collapse live, and step into full Virtual Reality.
+                </p>
+
+                <div class="card-features">
+                    <div class="feature-item">
+                        <span class="feat-dot cyan"></span>
+                        <span>Electron & Photon Beam Emitter</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feat-dot magenta"></span>
+                        <span>Which-Way Quantum Detector</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feat-dot green"></span>
+                        <span>Real-Time Phosphor Screen & $\psi^*\psi$ Graph</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feat-dot amber"></span>
+                        <span>Meta Quest 3S / 3 6DoF Teleportation</span>
+                    </div>
+                </div>
+
+                <div class="card-footer">
+                    <button id="btn-enter-experiment" class="portal-launch-btn btn-launch-exp">
+                        <span>Launch Experiment Lab</span>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
             </div>
 
-            <div class="telemetry-bar">
+            <!-- OPTION 2: THEORY -->
+            <div class="portal-card glass-card card-theory" id="portal-card-theory">
+                <div class="card-glow-overlay"></div>
+                <div class="card-badge-row">
+                    <span class="pill-badge pill-magenta">📚 DEEP THEORETICAL SUITE</span>
+                    <span class="pill-badge pill-purple">Interactive Math</span>
+                </div>
+
+                <div class="card-icon-wrapper">
+                    <div class="card-icon magenta-glow">📚</div>
+                </div>
+
+                <h2 class="card-title">Quantum Theory</h2>
+                <h3 class="card-subtitle">Wave Mechanics & The Measurement Paradox</h3>
+                
+                <p class="card-description">
+                    Explore the mathematics and profound paradoxes of quantum mechanics. Learn wave interference, state vector superposition $|\psi_1+\psi_2|^2$, quantum decoherence, De Broglie matter waves, and test formulas with dynamic live calculators.
+                </p>
+
+                <div class="card-features">
+                    <div class="feature-item">
+                        <span class="feat-dot magenta"></span>
+                        <span>Wave Superposition vs Quantum Collapse</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feat-dot cyan"></span>
+                        <span>De Broglie Matter Waves & Davisson-Germer</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feat-dot green"></span>
+                        <span>Heisenberg Uncertainty & Complementarity</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feat-dot purple"></span>
+                        <span>Interactive Wave & Fringe Calculator</span>
+                    </div>
+                </div>
+
+                <div class="card-footer">
+                    <button id="btn-enter-theory" class="portal-launch-btn btn-launch-theory">
+                        <span>Explore Quantum Theory</span>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Portal Specs & Tech Footer -->
+        <footer class="portal-footer-specs">
+            <div class="spec-pill"><span>⚡ Three.js GPU Accelerated</span></div>
+            <div class="spec-pill"><span>🥽 WebXR 6DoF Ready</span></div>
+            <div class="spec-pill"><span>🎵 Procedural Web Audio Synth</span></div>
+            <div class="spec-pill"><span>📐 Quantum Physics Math Model</span></div>
+        </footer>
+    </div>
+
+
+    <!-- ===================================================================== -->
+    <!-- 2. EXPERIMENTS CATALOG VIEW (Directory of Laboratory Experiments)     -->
+    <!-- ===================================================================== -->
+    <div id="experiments-catalog-view" class="portal-container hidden">
+        
+        <!-- Catalog Header -->
+        <header class="portal-header">
+            <div class="portal-tag">
+                <span class="tag-glow"></span>
+                <span>QUANTUM PHYSICS EXPERIMENTAL SUITE</span>
+            </div>
+            <h1 class="portal-main-title">Quantum Physics Experiments</h1>
+            <p class="portal-main-desc">
+                Select an experiment below to enter the interactive 3D WebXR laboratory. Manipulate emitters, detectors, and wave parameters to observe quantum mechanics in real time.
+            </p>
+        </header>
+
+        <!-- Experiments Cards Grid -->
+        <div class="exp-catalog-grid">
+            
+            <!-- EXPERIMENT 1: YOUNGS DOUBLE SLIT EXPERIMENT -->
+            <div class="exp-card glass-card active-exp-card" id="card-exp-ydse">
+                <div class="card-glow-overlay"></div>
+                <div class="exp-card-header">
+                    <div class="exp-number-badge">EXPERIMENT 01</div>
+                    <div class="exp-status-pill live">⚡ LIVE 3D / VR LAB</div>
+                </div>
+
+                <div class="exp-card-body">
+                    <div class="exp-card-icon cyan-glow">🔬</div>
+                    <div class="exp-card-details">
+                        <h2 class="exp-card-title">Young's Double Slit Experiment</h2>
+                        <h3 class="exp-card-sub">Wave-Particle Duality & Quantum Measurement Paradox</h3>
+                        <p class="exp-card-desc">
+                            Fire coherent electron and photon beams through microscopic double slits. Observe wave interference fringes on the phosphor screen, and toggle the which-way observer detector to witness wavefunction collapse live in real time.
+                        </p>
+                        
+                        <div class="exp-card-tags">
+                            <span class="exp-tag">⚡ Continuous / Single Electron Gun</span>
+                            <span class="exp-tag">👁️ Which-Way Quantum Detector</span>
+                            <span class="exp-tag">📊 Live $\psi^*\psi$ Intensity Graph</span>
+                            <span class="exp-tag">🥽 6DoF VR Teleportation</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="exp-card-footer">
+                    <button id="btn-enter-ydse" class="btn-enter-sim">
+                        <span>Enter into Experiment</span>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- EXPERIMENT 2: PHOTOELECTRIC EFFECT (COMING SOON) -->
+            <div class="exp-card glass-card coming-soon-card">
+                <div class="exp-card-header">
+                    <div class="exp-number-badge">EXPERIMENT 02</div>
+                    <div class="exp-status-pill upcoming">⏳ COMING SOON</div>
+                </div>
+
+                <div class="exp-card-body">
+                    <div class="exp-card-icon amber-glow">💡</div>
+                    <div class="exp-card-details">
+                        <h2 class="exp-card-title">Photoelectric Effect & Work Function</h2>
+                        <h3 class="exp-card-sub">Photon Energy Quantization ($E = h\nu$)</h3>
+                        <p class="exp-card-desc">
+                            Irradiate clean metal surfaces with monochromatic light of variable frequency and intensity to measure electron kinetic energy and verify Einstein's photoelectric equation.
+                        </p>
+                        
+                        <div class="exp-card-tags">
+                            <span class="exp-tag">💡 Variable UV/Visible Source</span>
+                            <span class="exp-tag">⚡ Stopping Potential Voltage</span>
+                            <span class="exp-tag">📈 Work Function Calculator</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="exp-card-footer">
+                    <button class="btn-disabled" disabled>
+                        <span>🔒 In Development</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- EXPERIMENT 3: STERN-GERLACH EXPERIMENT (COMING SOON) -->
+            <div class="exp-card glass-card coming-soon-card">
+                <div class="exp-card-header">
+                    <div class="exp-number-badge">EXPERIMENT 03</div>
+                    <div class="exp-status-pill upcoming">⏳ COMING SOON</div>
+                </div>
+
+                <div class="exp-card-body">
+                    <div class="exp-card-icon purple-glow">⚛️</div>
+                    <div class="exp-card-details">
+                        <h2 class="exp-card-title">Stern-Gerlach Spin Quantization</h2>
+                        <h3 class="exp-card-sub">Spatial Quantization of Atomic Angular Momentum</h3>
+                        <p class="exp-card-desc">
+                            Send silver atoms through an inhomogeneous magnetic field to observe the discrete splitting of the atomic beam into spin-up and spin-down quantum states.
+                        </p>
+                        
+                        <div class="exp-card-tags">
+                            <span class="exp-tag">🧲 Inhomogeneous Magnetic Field</span>
+                            <span class="exp-tag">⚛️ Spin Superposition</span>
+                            <span class="exp-tag">💥 Quantum State Measurement</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="exp-card-footer">
+                    <button class="btn-disabled" disabled>
+                        <span>🔒 In Development</span>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="catalog-back-row">
+            <button id="btn-catalog-back-hub" class="catalog-back-btn">
+                <span>← Back to Hub Portal</span>
+            </button>
+        </div>
+
+    </div>
+
+
+    <!-- ===================================================================== -->
+    <!-- 3. EXPERIMENT VIEW (3D WebXR Laboratory HUD)                         -->
+    <!-- ===================================================================== -->
+    <div id="experiment-hud" class="hud-layer hidden">
+        
+        <!-- Top Sub-Bar: Lab Telemetry & Status -->
+        <div class="telemetry-bar-row">
+            <button id="btn-back-to-catalog" class="subnav-back-btn" title="Back to Experiments Catalog">
+                <span>← All Experiments</span>
+            </button>
+            <div class="telemetry-bar glass-card">
                 <div class="stat-pill" id="stat-state">
-                    <span class="stat-label">STATE</span>
+                    <span class="stat-label">QUANTUM STATE</span>
                     <span class="stat-value state-wave" id="val-quantum-state">WAVE SUPERPOSITION</span>
                 </div>
                 <div class="stat-pill">
@@ -58,21 +337,15 @@
                     <span class="stat-value font-mono" id="val-hit-count">0</span>
                 </div>
                 <div class="stat-pill">
-                    <span class="stat-label">DETECTOR</span>
+                    <span class="stat-label">OBSERVER</span>
                     <span class="stat-value font-mono text-inactive" id="val-detector-status">OFF (Unobserved)</span>
                 </div>
+                <div class="stat-pill">
+                    <span class="stat-label">FRINGE WIDTH β</span>
+                    <span class="stat-value font-mono" id="val-fringe-width-top">0.36 mm</span>
+                </div>
             </div>
-
-            <div class="top-actions">
-                <button id="btn-sound-toggle" class="icon-btn" title="Toggle Lab Audio" aria-label="Toggle Audio">
-                    <svg id="icon-sound-on" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
-                    <svg id="icon-sound-off" class="hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
-                </button>
-                <button id="btn-guide-toggle" class="icon-btn" title="Quantum Physics Theory & Guide" aria-label="Theory Guide">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-                </button>
-            </div>
-        </header>
+        </div>
 
         <!-- Camera Preset Selector -->
         <div class="view-preset-bar glass-card">
@@ -200,52 +473,467 @@
 
     </div>
 
-    <!-- Quantum Physics Theory & Guide Modal -->
+
+    <!-- ===================================================================== -->
+    <!-- 3. THEORY & EDUCATIONAL SUITE VIEW                                    -->
+    <!-- ===================================================================== -->
+    <div id="theory-view" class="theory-container hidden">
+        <div class="theory-shell glass-card">
+            
+            <!-- Theory Sidebar / Chapter Index -->
+            <aside class="theory-sidebar">
+                <div class="sidebar-header">
+                    <div class="sidebar-title">
+                        <span class="sidebar-icon">📖</span>
+                        <span>Theory Syllabus</span>
+                    </div>
+                    <span class="sidebar-badge">6 Modules</span>
+                </div>
+
+                <nav class="theory-chapter-list">
+                    <button class="chapter-nav-btn active" data-chapter="1">
+                        <span class="chap-num">01</span>
+                        <div class="chap-info">
+                            <span class="chap-title">Wave Interference</span>
+                            <span class="chap-sub">Double-slit optics & fringes</span>
+                        </div>
+                    </button>
+
+                    <button class="chapter-nav-btn" data-chapter="2">
+                        <span class="chap-num">02</span>
+                        <div class="chap-info">
+                            <span class="chap-title">Measurement Paradox</span>
+                            <span class="chap-sub">Collapse & decoherence</span>
+                        </div>
+                    </button>
+
+                    <button class="chapter-nav-btn" data-chapter="3">
+                        <span class="chap-num">03</span>
+                        <div class="chap-info">
+                            <span class="chap-title">Matter Waves</span>
+                            <span class="chap-sub">De Broglie & electrons</span>
+                        </div>
+                    </button>
+
+                    <button class="chapter-nav-btn" data-chapter="4">
+                        <span class="chap-num">04</span>
+                        <div class="chap-info">
+                            <span class="chap-title">Heisenberg Uncertainty</span>
+                            <span class="chap-sub">Complementarity principle</span>
+                        </div>
+                    </button>
+
+                    <button class="chapter-nav-btn" data-chapter="5">
+                        <span class="chap-num">05</span>
+                        <div class="chap-info">
+                            <span class="chap-title">Path Integrals</span>
+                            <span class="chap-sub">Feynman sum & quantum eraser</span>
+                        </div>
+                    </button>
+
+                    <button class="chapter-nav-btn" data-chapter="6">
+                        <span class="chap-num">06</span>
+                        <div class="chap-info">
+                            <span class="chap-title">Wave Calculator</span>
+                            <span class="chap-sub">Live fringe simulation tool</span>
+                        </div>
+                    </button>
+                </nav>
+
+                <div class="sidebar-cta-box">
+                    <div class="cta-title">Test in 3D Lab</div>
+                    <p class="cta-desc">Apply these theoretical concepts in the real-time simulation.</p>
+                    <button id="theory-btn-launch-lab" class="sidebar-launch-btn">
+                        <span>Open 3D Experiment</span>
+                        <span>→</span>
+                    </button>
+                </div>
+            </aside>
+
+            <!-- Theory Main Content Scroll Area -->
+            <main class="theory-content-panel">
+                
+                <!-- CHAPTER 1 -->
+                <article class="theory-article active" id="chapter-1">
+                    <div class="article-badge">MODULE 01 • CLASSICAL & QUANTUM OPTICS</div>
+                    <h2 class="article-title">Wave Interference & Young's Experiment</h2>
+                    
+                    <p class="lead-paragraph">
+                        In 1801, polymath <strong>Thomas Young</strong> performed an experiment that shook the foundations of classical Newtonian mechanics: by passing monochromatic light through two closely spaced parallel slits, he proved conclusively that light behaves as a continuous <strong>wave</strong>.
+                    </p>
+
+                    <div class="theory-grid-2col">
+                        <div class="concept-card">
+                            <h3>🌊 The Principle of Superposition</h3>
+                            <p>
+                                When a planar wavefront encounters two narrow slits of width $a$ separated by distance $d$, each slit acts as a coherent secondary emitter of cylindrical wavelets (Huygens-Fresnel Principle).
+                            </p>
+                            <p>
+                                At any given point $y$ on a screen placed at distance $D$, the waves from slit 1 and slit 2 arrive with a path length difference $\Delta x$:
+                            </p>
+                            <div class="math-card font-mono">
+                                $$\Delta x = d \sin\theta \approx \frac{y \cdot d}{D}$$
+                            </div>
+                        </div>
+
+                        <div class="concept-card">
+                            <h3>✨ Interference Conditions</h3>
+                            <ul class="styled-list">
+                                <li>
+                                    <strong>Constructive Interference (Bright Fringes / Maxima):</strong>
+                                    <div class="math-card font-mono">$$\Delta x = m \lambda \quad (m = 0, \pm 1, \pm 2, \dots)$$</div>
+                                    Peak meets peak; the wave amplitudes add up constructively.
+                                </li>
+                                <li>
+                                    <strong>Destructive Interference (Dark Fringes / Minima):</strong>
+                                    <div class="math-card font-mono">$$\Delta x = \left(m + \frac{1}{2}\right) \lambda$$</div>
+                                    Peak meets trough; waves cancel completely to zero intensity.
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="callout-box">
+                        <div class="callout-header">
+                            <span class="callout-icon">📐</span>
+                            <h4>Fringe Width Formula ($\beta$)</h4>
+                        </div>
+                        <p>
+                            The linear separation between two consecutive bright fringes (or two dark fringes) on the detector screen is known as the <strong>Fringe Width ($\beta$)</strong>:
+                        </p>
+                        <div class="math-highlight font-mono">
+                            $$\beta = \frac{\lambda D}{d}$$
+                        </div>
+                        <div class="formula-breakdown">
+                            <span class="break-item"><strong>$\lambda$:</strong> Wavelength of quantum particle</span>
+                            <span class="break-item"><strong>$D$:</strong> Distance to detection screen</span>
+                            <span class="break-item"><strong>$d$:</strong> Slit separation distance</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- CHAPTER 2 -->
+                <article class="theory-article" id="chapter-2">
+                    <div class="article-badge">MODULE 02 • THE MEASUREMENT PROBLEM</div>
+                    <h2 class="article-title">The Quantum Measurement Paradox & Collapse</h2>
+                    
+                    <p class="lead-paragraph">
+                        What happens when we fire particles <strong>one by one</strong>? In quantum mechanics, an unobserved electron does not simply pass through Slit 1 OR Slit 2. Instead, its state vector is in a coherent quantum superposition:
+                    </p>
+
+                    <div class="math-highlight font-mono">
+                        $$|\Psi\rangle = \frac{1}{\sqrt{2}} \left(|\text{Slit}_1\rangle + |\text{Slit}_2\rangle\right)$$
+                    </div>
+
+                    <div class="theory-grid-2col">
+                        <div class="state-comparison-card state-wave-box">
+                            <div class="comp-badge wave">DETECTOR OFF (Unobserved)</div>
+                            <h4>Wave Superposition Pattern</h4>
+                            <p>
+                                The probability distribution of detecting a particle at position $y$ is given by Born's rule:
+                            </p>
+                            <div class="math-card font-mono">
+                                $$I(y) \propto |\psi_1 + \psi_2|^2 = |\psi_1|^2 + |\psi_2|^2 + 2\text{Re}(\psi_1^*\psi_2)$$
+                            </div>
+                            <p>
+                                The crucial term is the <strong>interference cross-term $2\text{Re}(\psi_1^*\psi_2)$</strong>! This term produces the multi-band alternating interference pattern, even when electrons are fired <em>one at a time</em>. Each single electron interferes with itself!
+                            </p>
+                        </div>
+
+                        <div class="state-comparison-card state-particle-box">
+                            <div class="comp-badge particle">DETECTOR ON (Which-Way Observer)</div>
+                            <h4>Wavefunction Collapse (Decoherence)</h4>
+                            <p>
+                                If we place a detector at the slits to observe which hole the electron went through:
+                            </p>
+                            <div class="math-card font-mono">
+                                $$I_{\text{observed}}(y) = |\psi_1|^2 + |\psi_2|^2$$
+                            </div>
+                            <p>
+                                The phase coherence between paths is destroyed. The interference cross-term <strong>vanishes ($2\text{Re}(\psi_1^*\psi_2) \to 0$)</strong>. The electron acts like a classical bullet, producing two localized clumps directly behind each slit.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Interactive Wave vs Particle Simulation Canvas inside Theory -->
+                    <div class="interactive-theory-block glass-card">
+                        <div class="block-header">
+                            <div class="block-title">
+                                <span class="badge-dot"></span>
+                                <h4>Interactive Phase Coherence Visualizer</h4>
+                            </div>
+                            <div class="block-actions">
+                                <button id="theory-toggle-state" class="sim-toggle-btn">
+                                    Toggle Observer: <strong id="theory-state-label" class="cyan">OFF (Wave Superposition)</strong>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="sim-canvas-wrapper">
+                            <canvas id="theory-wave-canvas" width="600" height="240"></canvas>
+                        </div>
+                        <div class="sim-caption">
+                            Live 2D Quantum Wave Amplitude ($\text{Re}[\Psi]$) vs Collapsed Classical Particle Ray Distribution.
+                        </div>
+                    </div>
+                </article>
+
+                <!-- CHAPTER 3 -->
+                <article class="theory-article" id="chapter-3">
+                    <div class="article-badge">MODULE 03 • MATTER WAVES</div>
+                    <h2 class="article-title">De Broglie Matter Waves & Electron Diffraction</h2>
+                    
+                    <p class="lead-paragraph">
+                        In 1924, French physicist <strong>Louis de Broglie</strong> made a daring hypothesis: if light waves can behave like particles (photons, as Einstein showed in the photoelectric effect), then matter particles like electrons, neutrons, and atoms must also possess wave-like characteristics.
+                    </p>
+
+                    <div class="callout-box">
+                        <div class="callout-header">
+                            <span class="callout-icon">⚛️</span>
+                            <h4>The De Broglie Wavelength Equation</h4>
+                        </div>
+                        <p>
+                            The wavelength $\lambda$ associated with any moving mass $m$ with momentum $p$ is:
+                        </p>
+                        <div class="math-highlight font-mono">
+                            $$\lambda = \frac{h}{p} = \frac{h}{m v} = \frac{h}{\sqrt{2 m E_k}}$$
+                        </div>
+                        <div class="formula-breakdown">
+                            <span class="break-item"><strong>$h$:</strong> Planck's constant ($6.626 \times 10^{-34} \text{ J}\cdot\text{s}$)</span>
+                            <span class="break-item"><strong>$p$:</strong> Linear Momentum ($m \cdot v$)</span>
+                            <span class="break-item"><strong>$E_k$:</strong> Kinetic energy ($e \cdot V$)</span>
+                        </div>
+                    </div>
+
+                    <div class="theory-grid-2col">
+                        <div class="concept-card">
+                            <h3>🔬 The Davisson-Germer Experiment (1927)</h3>
+                            <p>
+                                Clinton Davisson and Lester Germer fired slow electrons at a crystalline nickel target and measured the angular distribution of scattered electrons. They observed peak intensity angles identical to X-ray Bragg diffraction, confirming de Broglie's relation with extraordinary precision.
+                            </p>
+                        </div>
+                        <div class="concept-card">
+                            <h3>🪐 Why don't we see everyday objects diffract?</h3>
+                            <p>
+                                A baseball of mass $0.15\text{ kg}$ thrown at $40\text{ m/s}$ has a de Broglie wavelength of:
+                            </p>
+                            <div class="math-card font-mono">
+                                $$\lambda = \frac{6.626 \times 10^{-34}}{0.15 \times 40} \approx 1.1 \times 10^{-34} \text{ meters}$$
+                            </div>
+                            <p>
+                                This is $10^{19}$ times smaller than an atomic nucleus! Thus quantum interference is undetectable for macroscopic bodies.
+                            </p>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- CHAPTER 4 -->
+                <article class="theory-article" id="chapter-4">
+                    <div class="article-badge">MODULE 04 • QUANTUM FOUNDATIONS</div>
+                    <h2 class="article-title">Heisenberg Uncertainty & Bohr Complementarity</h2>
+                    
+                    <p class="lead-paragraph">
+                        Why can't we build a detector so gentle that it detects which slit the electron passed through without destroying the interference fringes? <strong>Werner Heisenberg</strong> and <strong>Niels Bohr</strong> showed that nature fundamentally forbids this.
+                    </p>
+
+                    <div class="callout-box">
+                        <div class="callout-header">
+                            <span class="callout-icon">📐</span>
+                            <h4>Heisenberg's Uncertainty Principle</h4>
+                        </div>
+                        <div class="math-highlight font-mono">
+                            $$\Delta x \cdot \Delta p_x \ge \frac{\hbar}{2} = \frac{h}{4\pi}$$
+                        </div>
+                    </div>
+
+                    <div class="theory-grid-2col">
+                        <div class="concept-card">
+                            <h3>🔍 The Mechanism of Disturbance</h3>
+                            <p>
+                                To determine which slit the particle enters with slit separation $d$, the detector's position uncertainty must be $\Delta x < \frac{d}{2}$.
+                            </p>
+                            <p>
+                                By the uncertainty principle, this imparts an uncontrollable momentum uncertainty $\Delta p_x \ge \frac{h}{d}$.
+                            </p>
+                            <p>
+                                This random transverse momentum deflects the particle by an angle $\Delta \theta \approx \frac{\Delta p_x}{p} \ge \frac{\lambda}{d}$, which exactly corresponds to the angular width of one fringe! The fringes are completely smeared out.
+                            </p>
+                        </div>
+
+                        <div class="concept-card">
+                            <h3>☯️ Bohr's Principle of Complementarity</h3>
+                            <p>
+                                Quantum objects possess mutually exclusive pairs of complementary properties (such as wave-like interference and particle-like trajectory).
+                            </p>
+                            <p>
+                                The choice of experimental apparatus determines which property manifests:
+                            </p>
+                            <ul class="styled-list">
+                                <li>No detector $\to$ Wave behavior observed.</li>
+                                <li>Which-way detector $\to$ Particle trajectory observed.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- CHAPTER 5 -->
+                <article class="theory-article" id="chapter-5">
+                    <div class="article-badge">MODULE 05 • ADVANCED QUANTUM MECHANICS</div>
+                    <h2 class="article-title">Feynman's Path Integrals & Quantum Erasers</h2>
+                    
+                    <p class="lead-paragraph">
+                        Nobel laureate <strong>Richard Feynman</strong> described the double-slit experiment as containing <em>"the only mystery of quantum mechanics."</em> In his formulation of quantum mechanics, a particle simultaneously traverses <strong>all possible paths in spacetime</strong>!
+                    </p>
+
+                    <div class="callout-box">
+                        <div class="callout-header">
+                            <span class="callout-icon">✨</span>
+                            <h4>The Path Integral Formula</h4>
+                        </div>
+                        <div class="math-highlight font-mono">
+                            $$K(b, a) = \sum_{\text{all paths } \Gamma} e^{\frac{i}{\hbar} S[\Gamma]} = \int \mathcal{D}[x(t)] \, \exp\left(\frac{i}{\hbar} \int L(x, \dot{x}, t) \, dt\right)$$
+                        </div>
+                        <p>
+                            Every trajectory carries an amplitude $e^{i S/\hbar}$ where $S$ is the classical action. When paths interfere constructively, the classical trajectory emerges in the limit $\hbar \to 0$.
+                        </p>
+                    </div>
+
+                    <div class="concept-card">
+                        <h3>🧪 The Quantum Eraser (Scully & Drühl, 1982)</h3>
+                        <p>
+                            If we mark the photons passing through each slit with orthogonal polarizations (e.g., clockwise vs counter-clockwise circular polarization), which-way information is recorded and fringes vanish.
+                        </p>
+                        <p>
+                            However, if we place a diagonal polarizer before the screen that <strong>erases</strong> the which-way information, the interference fringes instantly reappear! This proves that wavefunction collapse is not a mechanical disruption, but rather a consequence of quantum information entanglement.
+                        </p>
+                    </div>
+                </article>
+
+                <!-- CHAPTER 6 -->
+                <article class="theory-article" id="chapter-6">
+                    <div class="article-badge">MODULE 06 • INTERACTIVE TOOLBOX</div>
+                    <h2 class="article-title">Interactive Wave & Fringe Calculator</h2>
+                    
+                    <p class="lead-paragraph">
+                        Experiment with the physics equations in real-time. Adjust the quantum wavelength $\lambda$, slit separation $d$, and screen distance $D$ to observe live calculated intensity curves $I(y)$ and numeric fringe properties.
+                    </p>
+
+                    <div class="calculator-layout">
+                        
+                        <!-- Left: Controls -->
+                        <div class="calc-controls-card glass-card">
+                            <h3>Parameters</h3>
+
+                            <!-- Wavelength Slider -->
+                            <div class="calc-slider-group">
+                                <div class="calc-slider-header">
+                                    <label for="theory-slider-wl">Wavelength ($\lambda$)</label>
+                                    <span class="font-mono text-cyan" id="theory-val-wl">500 nm</span>
+                                </div>
+                                <input type="range" id="theory-slider-wl" min="380" max="750" step="10" value="500">
+                                <div class="spectrum-bar"></div>
+                            </div>
+
+                            <!-- Slit Separation Slider -->
+                            <div class="calc-slider-group">
+                                <div class="calc-slider-header">
+                                    <label for="theory-slider-slit">Slit Separation ($d$)</label>
+                                    <span class="font-mono text-cyan" id="theory-val-slit">0.28 mm</span>
+                                </div>
+                                <input type="range" id="theory-slider-slit" min="0.10" max="0.80" step="0.02" value="0.28">
+                            </div>
+
+                            <!-- Screen Distance Slider -->
+                            <div class="calc-slider-group">
+                                <div class="calc-slider-header">
+                                    <label for="theory-slider-dist">Screen Distance ($D$)</label>
+                                    <span class="font-mono text-cyan" id="theory-val-dist">5.30 m</span>
+                                </div>
+                                <input type="range" id="theory-slider-dist" min="1.0" max="10.0" step="0.1" value="5.3">
+                            </div>
+
+                            <!-- Slit Width Slider -->
+                            <div class="calc-slider-group">
+                                <div class="calc-slider-header">
+                                    <label for="theory-slider-width">Slit Width ($a$)</label>
+                                    <span class="font-mono text-cyan" id="theory-val-width">0.06 mm</span>
+                                </div>
+                                <input type="range" id="theory-slider-width" min="0.02" max="0.12" step="0.01" value="0.06">
+                            </div>
+
+                            <button id="theory-btn-sync-lab" class="sync-lab-btn">
+                                <span>🚀 Launch 3D Lab with these Parameters</span>
+                            </button>
+                        </div>
+
+                        <!-- Right: Real-time Graph & Metrics -->
+                        <div class="calc-results-card glass-card">
+                            <div class="results-header">
+                                <h3>Theoretical Intensity Curve $I(y)$</h3>
+                                <div class="fringe-badge">
+                                    $\beta =$ <span id="theory-calc-fringe">0.36</span> mm
+                                </div>
+                            </div>
+
+                            <div class="canvas-box">
+                                <canvas id="theory-fringe-canvas" width="460" height="220"></canvas>
+                            </div>
+
+                            <div class="metrics-grid font-mono">
+                                <div class="metric-item">
+                                    <span class="m-label">Fringe Spacing $\beta$</span>
+                                    <span class="m-val" id="theory-metric-beta">0.36 mm</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="m-label">Central Envelope Width</span>
+                                    <span class="m-val" id="theory-metric-envelope">3.36 mm</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="m-label">1st Dark Fringe $y_1$</span>
+                                    <span class="m-val" id="theory-metric-y1">±0.18 mm</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="m-label">Visible Fringes in Central Peak</span>
+                                    <span class="m-val" id="theory-metric-fringes">~9 bands</span>
+                                </div>
+                            </div>
+
+                            <div class="math-subnote font-mono">
+                                Formula: $I(y) = I_0 \cos^2\left(\frac{\pi d y}{\lambda D}\right) \cdot \operatorname{sinc}^2\left(\frac{\pi a y}{\lambda D}\right)$
+                            </div>
+                        </div>
+
+                    </div>
+                </article>
+
+            </main>
+        </div>
+    </div>
+
+
+    <!-- ===================================================================== -->
+    <!-- QUICK LAB GUIDE MODAL                                                 -->
+    <!-- ===================================================================== -->
     <div id="modal-guide" class="modal-backdrop hidden">
         <div class="modal-card glass-card">
             <div class="modal-header">
-                <h2>Quantum Mechanics: Wave-Particle Duality</h2>
+                <h2>Laboratory Controls Quick Guide</h2>
                 <button id="btn-close-modal" class="close-btn" aria-label="Close modal">&times;</button>
             </div>
             <div class="modal-body">
                 <section class="guide-section">
-                    <h3>1. The Classical Paradox (Wave Behavior)</h3>
-                    <p>
-                        When electrons or photons pass through two slits without being observed, each quantum entity exhibits wave properties. 
-                        Its probability wavefunction $\psi$ passes through <strong>both slits simultaneously</strong>, causing constructive and destructive interference:
-                    </p>
-                    <div class="math-callout">
-                        $$I(y) \propto |\psi_1 + \psi_2|^2 = |\psi_1|^2 + |\psi_2|^2 + 2\text{Re}(\psi_1^*\psi_2)$$
-                    </div>
-                    <p>This creates alternating bright and dark interference fringes on the phosphor detection screen.</p>
-                </section>
-
-                <section class="guide-section">
-                    <h3>2. The Quantum Measurement Problem (Detector ON)</h3>
-                    <p>
-                        When we place a "which-way" detector at the slits to observe which slit the particle went through, the quantum superposition collapses into an eigenstate (wavefunction collapse):
-                    </p>
-                    <div class="math-callout">
-                        $$I_{\text{observed}}(y) = |\psi_1|^2 + |\psi_2|^2$$
-                    </div>
-                    <p>
-                        The interference cross-term $2\text{Re}(\psi_1^*\psi_2)$ completely vanishes! The particles behave strictly as classical bullets, forming <strong>two separate localized clumps</strong> on the screen directly behind each slit.
-                    </p>
-                </section>
-
-                <section class="guide-section">
-                    <h3>3. How to use this Laboratory</h3>
+                    <h3>Interactive 3D & WebXR Controls</h3>
                     <ul>
-                        <li><strong>⚡ Emitter Button</strong>: Turns the quantum electron beam on or off.</li>
-                        <li><strong>👁️ Detector Button</strong>: Turns the "which-way" observer on or off to watch the quantum collapse happen live.</li>
-                        <li><strong>↺ Clear Button</strong>: Clears accumulated phosphor screen hits to start a fresh measurement run.</li>
-                        <li><strong>Wavelength (λ) & Slit Separation (d)</strong>: Adjust physical parameters to observe how fringe spacing $\beta = \frac{\lambda D}{d}$ expands and contracts in real time.</li>
-                        <li><strong>VR Mode</strong>: Click "Enter VR" below to step directly onto the laboratory floor in full 6DoF Virtual Reality!</li>
+                        <li><strong>⚡ Emitter Button (Space)</strong>: Turns the quantum electron beam on or off.</li>
+                        <li><strong>👁️ Detector Button (D)</strong>: Toggles the "which-way" detector to observe quantum collapse live.</li>
+                        <li><strong>↺ Clear Button (R)</strong>: Clears accumulated screen phosphor hits for a fresh run.</li>
+                        <li><strong>Wavelength (λ) & Slit Separation (d)</strong>: Controls real-time optical parameters and fringe spacing $\beta = \frac{\lambda D}{d}$.</li>
+                        <li><strong>VR Mode</strong>: Click "Enter VR" to walk around the optical laboratory in 6DoF Virtual Reality!</li>
+                        <li><strong>Teleportation in VR</strong>: Point your controller at the glowing holographic teleport discs on the floor and pull the trigger!</li>
                     </ul>
                 </section>
             </div>
             <div class="modal-footer">
-                <button id="btn-modal-got-it" class="primary-btn">Enter Laboratory</button>
+                <button id="btn-modal-got-it" class="primary-btn">Back to Lab</button>
             </div>
         </div>
     </div>

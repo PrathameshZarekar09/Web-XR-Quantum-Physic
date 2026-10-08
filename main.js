@@ -2,11 +2,13 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 // =============================================================================
 // QUANTUM SIMULATION STATE
 // =============================================================================
 const state = {
+    currentAppView: 'portal', // 'portal' | 'experiments' | 'experiment' | 'theory'
     emitterActive: true,
     detectorActive: false,
     beamMode: 'stream', // 'stream' | 'single'
@@ -18,10 +20,13 @@ const state = {
     totalHits: 0,
     audioEnabled: false,
     audioMuted: false,
+    userScale: 1.0,
+    userHeightOffset: 0.0, // Natural eye-level in VR (0.0 offset = real physical standing eye height ~1.6m)
     histogramBins: 120,
     hitHistogram: new Array(120).fill(0),
     maxHistCount: 1,
-    activeView: 'overview'
+    activeView: 'overview',
+    vrMenuVisible: true
 };
 
 // =============================================================================
@@ -184,17 +189,17 @@ window.addEventListener('click', ensureAudio, { once: true });
 window.addEventListener('keydown', ensureAudio, { once: true });
 
 // =============================================================================
-// SCENE, CAMERA, RENDERER
+// SCENE, CAMERA, RENDERER & HIGH-FIDELITY PBR ENVIRONMENT
 // =============================================================================
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0f1d);
-scene.fog = new THREE.FogExp2(0x0a0f1d, 0.025);
+scene.fog = new THREE.FogExp2(0x0a0f1d, 0.018);
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.05, 100);
-camera.position.set(0, 2.5, 5.2);
+camera.position.set(0, 2.4, 4.8);
 
 const xrRig = new THREE.Group();
-xrRig.position.set(0, 0, 3.8); // Optimal VR viewpoint: standing facing the entire optical bench and console
+xrRig.position.set(0, 0, 3.2); // Positioned directly in front of the optical bench
 scene.add(xrRig);
 xrRig.add(camera);
 
@@ -204,14 +209,27 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.25;
+renderer.toneMappingExposure = 1.35;
 renderer.xr.enabled = true;
 document.body.appendChild(renderer.domElement);
 
+// Compile Procedural PBR Room Environment for Realistic Metal & Specular Radiance
+const pmremGenerator = new THREE.PMREMGenerator(renderer);
+pmremGenerator.compileEquirectangularShader();
+const roomEnvironment = new RoomEnvironment();
+scene.environment = pmremGenerator.fromScene(roomEnvironment, 0.04).texture;
+
 // Reset XR Rig when entering VR session
 renderer.xr.addEventListener('sessionstart', () => {
-    xrRig.position.set(0, 0, 3.8);
+    xrRig.position.set(0, state.userHeightOffset, 3.2);
     xrRig.rotation.set(0, 0, 0);
+    if (vrMenuRoot) {
+        updateVRMenuTexture();
+    }
+});
+
+renderer.xr.addEventListener('sessionend', () => {
+    setAppView(state.currentAppView);
 });
 
 // VR Button
@@ -220,7 +238,7 @@ document.body.appendChild(vrBtn);
 
 // Orbit Controls
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.8, 0);
+controls.target.set(0, 2.0, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
 controls.maxPolarAngle = Math.PI / 2 - 0.02; // prevent going below floor
@@ -229,45 +247,64 @@ controls.maxDistance = 18;
 controls.update();
 
 // =============================================================================
-// LIGHTING SETUP
+// COMPREHENSIVE LABORATORY LIGHTING SETUP
 // =============================================================================
-const ambientLight = new THREE.AmbientLight(0xd0e0ff, 0.6);
+const ambientLight = new THREE.AmbientLight(0xdbeafe, 1.15);
 scene.add(ambientLight);
 
-const hemisphereLight = new THREE.HemisphereLight(0x7090ff, 0x111625, 1.2);
+const hemisphereLight = new THREE.HemisphereLight(0x93c5fd, 0x1e293b, 1.35);
 scene.add(hemisphereLight);
 
-const mainSun = new THREE.DirectionalLight(0xffffff, 1.8);
-mainSun.position.set(4, 8, 6);
+const mainSun = new THREE.DirectionalLight(0xffffff, 2.4);
+mainSun.position.set(4, 9, 5);
 mainSun.castShadow = true;
 mainSun.shadow.mapSize.width = 2048;
 mainSun.shadow.mapSize.height = 2048;
 mainSun.shadow.camera.near = 0.5;
 mainSun.shadow.camera.far = 25;
-mainSun.shadow.camera.left = -7;
-mainSun.shadow.camera.right = 7;
-mainSun.shadow.camera.top = 7;
-mainSun.shadow.camera.bottom = -7;
+mainSun.shadow.camera.left = -8;
+mainSun.shadow.camera.right = 8;
+mainSun.shadow.camera.top = 8;
+mainSun.shadow.camera.bottom = -8;
 mainSun.shadow.bias = -0.0005;
 scene.add(mainSun);
 
+// Soft Fill Light to eliminate harsh black regions
+const fillLight = new THREE.DirectionalLight(0x8bc4ff, 1.3);
+fillLight.position.set(-6, 7, 4);
+scene.add(fillLight);
+
+// Overhead Optical Bench Spotlight
+const benchSpot = new THREE.SpotLight(0xffffff, 3.2, 16, Math.PI / 3, 0.45, 1);
+benchSpot.position.set(0, 5.5, 1.2);
+benchSpot.target.position.set(0, 1.6, 0);
+scene.add(benchSpot);
+scene.add(benchSpot.target);
+
+// Console Desk Task Light
+const consoleSpot = new THREE.SpotLight(0x60a5fa, 2.0, 8, Math.PI / 4, 0.3);
+consoleSpot.position.set(-1.5, 4.0, 2.5);
+consoleSpot.target.position.set(-1.5, 1.4, 2.3);
+scene.add(consoleSpot);
+scene.add(consoleSpot.target);
+
 // Dynamic Accent Lights
-const emitterLight = new THREE.PointLight(0x00f0ff, 2.0, 3.5);
+const emitterLight = new THREE.PointLight(0x00f0ff, 2.8, 4.5);
 emitterLight.position.set(-3.1, 2.1, 0);
 scene.add(emitterLight);
 
-const detectorLight = new THREE.PointLight(0xff2d87, 0, 3.0);
+const detectorLight = new THREE.PointLight(0xff2d87, 0, 4.0);
 detectorLight.position.set(3.0, 2.45, 0.5);
 scene.add(detectorLight);
 
-const screenGlowLight = new THREE.PointLight(0x00ff88, 1.2, 4.0);
+const screenGlowLight = new THREE.PointLight(0x00ff88, 1.6, 4.5);
 screenGlowLight.position.set(5.1, 2.7, 0);
 scene.add(screenGlowLight);
 
 // Pendant Lamps
 [-4, 0, 4].forEach(x => {
-    const lampLight = new THREE.PointLight(0xffe8cc, 1.2, 7.0);
-    lampLight.position.set(x, 4.0, -1.5);
+    const lampLight = new THREE.PointLight(0xffe8cc, 1.4, 8.0);
+    lampLight.position.set(x, 4.2, -1.5);
     scene.add(lampLight);
 });
 
@@ -284,7 +321,7 @@ function initScreenTexture() {
     screenCtx.fillRect(0, 0, 512, 512);
 
     // Subtle grid lines on phosphor screen
-    screenCtx.strokeStyle = 'rgba(0, 255, 136, 0.08)';
+    screenCtx.strokeStyle = 'rgba(0, 255, 136, 0.12)';
     screenCtx.lineWidth = 1;
     for (let x = 0; x < 512; x += 32) {
         screenCtx.beginPath();
@@ -298,6 +335,11 @@ function initScreenTexture() {
         screenCtx.lineTo(512, y);
         screenCtx.stroke();
     }
+
+    // Phosphor screen border guide
+    screenCtx.strokeStyle = 'rgba(0, 255, 170, 0.4)';
+    screenCtx.lineWidth = 4;
+    screenCtx.strokeRect(6, 6, 500, 500);
 }
 initScreenTexture();
 
@@ -310,7 +352,7 @@ const screenMaterial = new THREE.MeshStandardMaterial({
     map: screenTexture,
     emissive: 0x003322,
     emissiveMap: screenTexture,
-    emissiveIntensity: 0.85,
+    emissiveIntensity: 0.95,
     roughness: 0.35,
     metalness: 0.1
 });
@@ -322,7 +364,7 @@ function recordScreenHit(normZ, normY) {
     const py = Math.floor(((1 - normY) / 2) * 512);
 
     if (px >= 0 && px < 512 && py >= 0 && py < 512) {
-        const rad = 2.5;
+        const rad = 2.8;
         const grad = screenCtx.createRadialGradient(px, py, 0, px, py, rad);
         const color = state.detectorActive ? 'rgba(255, 45, 135,' : 'rgba(0, 255, 170,';
 
@@ -381,10 +423,21 @@ const buttonAnimState = {
 };
 
 // =============================================================================
-// LOAD GLB MODEL
+// LOAD GLB 3D MODEL WITH PBR MATERIAL ENHANCEMENT
 // =============================================================================
 const loader = new GLTFLoader();
-const progressBar = document.getElementById('loading-progress');
+function dismissLoadingScreen() {
+    const loadingEl = document.getElementById('loading');
+    if (loadingEl && loadingEl.style.display !== 'none') {
+        loadingEl.style.opacity = '0';
+        setTimeout(() => {
+            loadingEl.style.display = 'none';
+        }, 350);
+    }
+}
+
+// Auto-dismiss loading screen quickly so the Hub Portal is immediately interactive
+setTimeout(dismissLoadingScreen, 250);
 
 loader.load(
     './models/YDSE1.glb',
@@ -397,12 +450,28 @@ loader.load(
                 child.castShadow = true;
                 child.receiveShadow = true;
 
-                // Better materials handling
+                // Enhanced PBR Materials: Ensure rich lighting, reflection, and visible contrast
                 if (child.material) {
-                    child.material.envMapIntensity = 1.0;
+                    child.material.envMapIntensity = 1.35;
+                    child.material.needsUpdate = true;
+
+                    if (child.material.isMeshStandardMaterial) {
+                        // Prevent pitch-black surfaces on dark metallic parts
+                        child.material.roughness = Math.max(0.28, Math.min(0.85, child.material.roughness));
+                        child.material.metalness = Math.min(0.65, child.material.metalness);
+
+                        // Brighten very dark materials for clear laboratory visibility
+                        if (child.material.color) {
+                            const hsl = {};
+                            child.material.color.getHSL(hsl);
+                            if (hsl.l < 0.12) {
+                                child.material.color.setHSL(hsl.h, hsl.s, Math.max(0.18, hsl.l * 2.2));
+                            }
+                        }
+                    }
                 }
 
-                // Interactive Buttons
+                // Interactive Buttons & Apparatus Nodes
                 if (child.name === 'BTN_EMITTER') {
                     buttonNodes.emitter = child;
                     buttonAnimState.emitter.baseY = child.position.y;
@@ -464,23 +533,20 @@ loader.load(
             }
         });
 
-        // Hide loading screen
-        const loadingEl = document.getElementById('loading');
-        loadingEl.style.opacity = '0';
-        setTimeout(() => { loadingEl.style.display = 'none'; }, 500);
-
+        dismissLoadingScreen();
         updateVisualState();
         console.log('YDSE 3D Physics Lab loaded and initialized successfully!');
     },
     function (progress) {
         if (progress.total > 0) {
             const percent = (progress.loaded / progress.total) * 100;
+            const progressBar = document.getElementById('loading-bar');
             if (progressBar) progressBar.style.width = `${percent}%`;
         }
     },
     function (error) {
-        console.error('Error loading YDSE GLB:', error);
-        document.getElementById('loading').innerHTML = '<div style="color:red">Failed to load 3D laboratory assets. Please refresh.</div>';
+        console.warn('Asynchronous YDSE GLB notice:', error);
+        dismissLoadingScreen();
     }
 );
 
@@ -667,7 +733,6 @@ function updateParticles(delta) {
 function updateVisualState() {
     // Wavelength Color Map
     const colorHex = wavelengthToHex(state.wavelength);
-    const waveColor = new THREE.Color(colorHex);
 
     if (buttonNodes.beam) {
         buttonNodes.beam.visible = state.emitterActive;
@@ -687,11 +752,11 @@ function updateVisualState() {
         band.material.color.set(colorHex);
     });
 
-    // Lights
-    emitterLight.intensity = state.emitterActive ? 2.5 : 0;
+    // Dynamic Lights
+    emitterLight.intensity = state.emitterActive ? 2.8 : 0;
     emitterLight.color.set(colorHex);
 
-    detectorLight.intensity = state.detectorActive ? 3.0 : 0;
+    detectorLight.intensity = state.detectorActive ? 3.5 : 0;
     if (buttonNodes.detectorStatus) {
         buttonNodes.detectorStatus.material.emissive.set(state.detectorActive ? 0xff0044 : 0x110005);
         buttonNodes.detectorStatus.material.color.set(state.detectorActive ? 0xff2d87 : 0x222222);
@@ -746,7 +811,11 @@ function updateVisualState() {
     const fringeWidthEl = document.getElementById('val-fringe-width');
     if (fringeWidthEl) fringeWidthEl.textContent = fringeWidthMm.toFixed(2);
 
+    const fringeWidthTop = document.getElementById('val-fringe-width-top');
+    if (fringeWidthTop) fringeWidthTop.textContent = `${fringeWidthMm.toFixed(2)} mm`;
+
     updateIntensityGraph();
+    updateVRMenuTexture();
 }
 
 function updateHUDStats() {
@@ -872,190 +941,56 @@ const teleportStations = {
     overview: {
         id: 'overview',
         name: 'Lab Overview',
-        vrPos: new THREE.Vector3(0, 0, 5.2),
-        camPos: new THREE.Vector3(0, 2.5, 5.2),
-        target: new THREE.Vector3(0, 1.8, 0),
-        avatarPos: new THREE.Vector3(0, 0, 4.2),
-        avatarLookAt: new THREE.Vector3(0, 1.8, 0)
+        vrPos: new THREE.Vector3(0, 0, 3.4),
+        camPos: new THREE.Vector3(0, 2.7, 5.4),
+        target: new THREE.Vector3(0, 2.0, 0)
     },
     console: {
         id: 'console',
         name: 'Console Desk',
-        vrPos: new THREE.Vector3(-1.5, 0, 3.4),
-        camPos: new THREE.Vector3(-1.5, 2.1, 3.2),
-        target: new THREE.Vector3(-1.5, 1.6, 0.5),
-        avatarPos: new THREE.Vector3(-1.5, 0, 3.2),
-        avatarLookAt: new THREE.Vector3(-1.5, 1.8, 0)
+        vrPos: new THREE.Vector3(-1.5, 0, 3.2),
+        camPos: new THREE.Vector3(-1.5, 2.3, 3.2),
+        target: new THREE.Vector3(-1.5, 1.9, 0.5)
     },
     slits: {
         id: 'slits',
         name: 'Double Slits Close-Up',
-        vrPos: new THREE.Vector3(0, 0, 1.3),
-        camPos: new THREE.Vector3(0.3, 2.8, 1.6),
-        target: new THREE.Vector3(0, 2.7, 0),
-        avatarPos: new THREE.Vector3(0.8, 0, 1.4),
-        avatarLookAt: new THREE.Vector3(0, 2.7, 0)
+        vrPos: new THREE.Vector3(0, 0, 1.4),
+        camPos: new THREE.Vector3(0.3, 2.7, 1.6),
+        target: new THREE.Vector3(0, 2.1, 0)
     },
     emitter: {
         id: 'emitter',
         name: 'Quantum Emitter Gun',
-        vrPos: new THREE.Vector3(-3.8, 0, 1.6),
-        camPos: new THREE.Vector3(-3.6, 2.3, 2.2),
-        target: new THREE.Vector3(-4.5, 2.1, 0),
-        avatarPos: new THREE.Vector3(-3.6, 0, 1.6),
-        avatarLookAt: new THREE.Vector3(-4.5, 2.1, 0)
+        vrPos: new THREE.Vector3(-3.2, 0, 1.5),
+        camPos: new THREE.Vector3(-3.4, 2.5, 2.2),
+        target: new THREE.Vector3(-3.8, 2.1, 0)
     },
     detector: {
         id: 'detector',
         name: 'Which-Way Detector',
-        vrPos: new THREE.Vector3(2.6, 0, 1.4),
-        camPos: new THREE.Vector3(2.5, 2.4, 1.5),
-        target: new THREE.Vector3(3.0, 2.1, 0),
-        avatarPos: new THREE.Vector3(2.3, 0, 1.5),
-        avatarLookAt: new THREE.Vector3(3.0, 2.1, 0)
+        vrPos: new THREE.Vector3(2.8, 0, 1.5),
+        camPos: new THREE.Vector3(2.6, 2.6, 1.6),
+        target: new THREE.Vector3(3.0, 2.2, 0)
     },
     screen: {
         id: 'screen',
         name: 'Phosphor Screen Target',
-        vrPos: new THREE.Vector3(4.5, 0, 1.4),
-        camPos: new THREE.Vector3(4.2, 2.7, 0.8),
-        target: new THREE.Vector3(5.3, 2.7, 0),
-        avatarPos: new THREE.Vector3(4.4, 0, 1.3),
-        avatarLookAt: new THREE.Vector3(5.3, 2.7, 0)
+        vrPos: new THREE.Vector3(4.8, 0, 1.5),
+        camPos: new THREE.Vector3(4.4, 2.9, 1.2),
+        target: new THREE.Vector3(5.3, 2.7, 0)
     },
     side: {
         id: 'side',
         name: 'Side Profile',
-        vrPos: new THREE.Vector3(0.5, 0, 4.8),
-        camPos: new THREE.Vector3(0.5, 2.2, 4.8),
-        target: new THREE.Vector3(0.5, 2.0, 0),
-        avatarPos: new THREE.Vector3(1.5, 0, 4.5),
-        avatarLookAt: new THREE.Vector3(0, 2.0, 0)
+        vrPos: new THREE.Vector3(0.5, 0, 4.4),
+        camPos: new THREE.Vector3(0.5, 2.5, 4.8),
+        target: new THREE.Vector3(0.5, 2.0, 0)
     }
 };
 
 // =============================================================================
-// 3D SCIENTIST / RESEARCHER AVATAR
-// =============================================================================
-let scientistAvatar = null;
-const avatarState = {
-    currentPos: new THREE.Vector3(0, 0, 4.2),
-    targetPos: new THREE.Vector3(0, 0, 4.2),
-    targetRotationY: 0
-};
-
-function createScientistAvatar() {
-    const avatar = new THREE.Group();
-    avatar.position.copy(avatarState.currentPos);
-
-    // 1. Materials
-    const suitMat = new THREE.MeshStandardMaterial({
-        color: 0x1e293b,
-        roughness: 0.4,
-        metalness: 0.2
-    });
-    const coatMat = new THREE.MeshStandardMaterial({
-        color: 0xf8fafc,
-        roughness: 0.6,
-        metalness: 0.1
-    });
-    const visorMat = new THREE.MeshBasicMaterial({
-        color: 0x00f0ff,
-        transparent: true,
-        opacity: 0.95
-    });
-    const glowCyanMat = new THREE.MeshBasicMaterial({
-        color: 0x00f0ff,
-        blending: THREE.AdditiveBlending
-    });
-    const padScreenMat = new THREE.MeshBasicMaterial({
-        color: 0x00ff88,
-        blending: THREE.AdditiveBlending
-    });
-
-    // 2. Head & Helmet / Visor
-    const headGroup = new THREE.Group();
-    headGroup.position.set(0, 1.62, 0);
-
-    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 16), suitMat);
-    helmet.scale.set(0.9, 1.05, 0.95);
-    headGroup.add(helmet);
-
-    const visor = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.07, 16, 1, false, -Math.PI / 3, Math.PI * 0.66), visorMat);
-    visor.rotation.x = Math.PI / 2;
-    visor.position.set(0, 0.02, 0.08);
-    headGroup.add(visor);
-
-    // Earpieces
-    [-0.13, 0.13].forEach(x => {
-        const ear = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.02, 12), glowCyanMat);
-        ear.rotation.z = Math.PI / 2;
-        ear.position.set(x, 0.02, 0);
-        headGroup.add(ear);
-    });
-    avatar.add(headGroup);
-
-    // 3. Torso & Lab Coat
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.55, 0.22), coatMat);
-    torso.position.set(0, 1.25, 0);
-    avatar.add(torso);
-
-    // Quantum Reactor Core Badge on chest
-    const chestCore = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.02, 16), glowCyanMat);
-    chestCore.rotation.x = Math.PI / 2;
-    chestCore.position.set(0, 1.35, 0.12);
-    avatar.add(chestCore);
-
-    // 4. Arms & Quantum Datapad
-    const armGeo = new THREE.CylinderGeometry(0.05, 0.045, 0.42, 12);
-
-    // Left Arm
-    const leftArm = new THREE.Mesh(armGeo, coatMat);
-    leftArm.position.set(-0.25, 1.15, 0.12);
-    leftArm.rotation.x = -Math.PI / 4;
-    leftArm.rotation.z = -Math.PI / 16;
-    avatar.add(leftArm);
-
-    // Right Arm
-    const rightArm = new THREE.Mesh(armGeo, coatMat);
-    rightArm.position.set(0.25, 1.15, 0.12);
-    rightArm.rotation.x = -Math.PI / 4;
-    rightArm.rotation.z = Math.PI / 16;
-    avatar.add(rightArm);
-
-    // Quantum Datapad (holding in hands)
-    const datapad = new THREE.Group();
-    datapad.position.set(0, 1.05, 0.28);
-    datapad.rotation.x = -Math.PI / 4;
-
-    const padBody = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.18, 0.012), suitMat);
-    const padScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.23, 0.15), padScreenMat);
-    padScreen.position.z = 0.008;
-    datapad.add(padBody);
-    datapad.add(padScreen);
-    avatar.add(datapad);
-
-    // 5. Legs & Boots
-    const legGeo = new THREE.CylinderGeometry(0.065, 0.06, 0.65, 12);
-    [-0.11, 0.11].forEach(x => {
-        const leg = new THREE.Mesh(legGeo, suitMat);
-        leg.position.set(x, 0.55, 0);
-        avatar.add(leg);
-
-        const boot = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.2), suitMat);
-        boot.position.set(x, 0.08, 0.04);
-        avatar.add(boot);
-    });
-
-    avatar.userData = { isAvatar: true, label: 'Observer (Quantum Researcher)' };
-    scene.add(avatar);
-    scientistAvatar = avatar;
-    return avatar;
-}
-createScientistAvatar();
-
-// =============================================================================
-// HOLOGRAPHIC TELEPORTATION PADS
+// HOLOGRAPHIC TELEPORTATION PADS (GLOWING GROUND CIRCLES ONLY)
 // =============================================================================
 const teleportPadsGroup = new THREE.Group();
 scene.add(teleportPadsGroup);
@@ -1066,21 +1001,35 @@ function createTeleportPads() {
         const padGroup = new THREE.Group();
         padGroup.position.copy(station.vrPos);
 
-        // 1. Floor Outer Ring
-        const ringGeo = new THREE.RingGeometry(0.38, 0.48, 32);
-        ringGeo.rotateX(-Math.PI / 2);
-        const ringMat = new THREE.MeshBasicMaterial({
+        // 1. Floor Outer Glowing Ring
+        const outerRingGeo = new THREE.RingGeometry(0.38, 0.46, 32);
+        outerRingGeo.rotateX(-Math.PI / 2);
+        const outerRingMat = new THREE.MeshBasicMaterial({
             color: 0x00f0ff,
             transparent: true,
-            opacity: 0.8,
+            opacity: 0.75,
             side: THREE.DoubleSide
         });
-        const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-        ringMesh.position.y = 0.02;
-        padGroup.add(ringMesh);
+        const outerRingMesh = new THREE.Mesh(outerRingGeo, outerRingMat);
+        outerRingMesh.position.y = 0.015;
+        padGroup.add(outerRingMesh);
 
-        // 2. Floor Inner Pulsing Disc
-        const discGeo = new THREE.CircleGeometry(0.34, 32);
+        // 2. Floor Middle Accent Ring
+        const midRingGeo = new THREE.RingGeometry(0.24, 0.27, 32);
+        midRingGeo.rotateX(-Math.PI / 2);
+        const midRingMat = new THREE.MeshBasicMaterial({
+            color: 0x00f0ff,
+            transparent: true,
+            opacity: 0.55,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide
+        });
+        const midRingMesh = new THREE.Mesh(midRingGeo, midRingMat);
+        midRingMesh.position.y = 0.018;
+        padGroup.add(midRingMesh);
+
+        // 3. Floor Inner Glowing Disc
+        const discGeo = new THREE.CircleGeometry(0.22, 32);
         discGeo.rotateX(-Math.PI / 2);
         const discMat = new THREE.MeshBasicMaterial({
             color: 0x00f0ff,
@@ -1090,66 +1039,26 @@ function createTeleportPads() {
             side: THREE.DoubleSide
         });
         const discMesh = new THREE.Mesh(discGeo, discMat);
-        discMesh.position.y = 0.022;
+        discMesh.position.y = 0.02;
         padGroup.add(discMesh);
 
-        // 3. Vertical Light Beam Column
-        const beamGeo = new THREE.CylinderGeometry(0.42, 0.42, 1.8, 24, 1, true);
-        const beamMat = new THREE.MeshBasicMaterial({
-            color: 0x00f0ff,
-            transparent: true,
-            opacity: 0.12,
-            blending: THREE.AdditiveBlending,
-            side: THREE.DoubleSide,
-            depthWrite: false
-        });
-        const beamMesh = new THREE.Mesh(beamGeo, beamMat);
-        beamMesh.position.y = 0.9;
-        padGroup.add(beamMesh);
-
-        // 4. Floating 3D Text Badge
-        const badgeCanvas = document.createElement('canvas');
-        badgeCanvas.width = 256;
-        badgeCanvas.height = 64;
-        const bCtx = badgeCanvas.getContext('2d');
-        bCtx.fillStyle = 'rgba(14, 20, 36, 0.85)';
-        bCtx.strokeStyle = '#00f0ff';
-        bCtx.lineWidth = 3;
-        bCtx.roundRect(4, 4, 248, 56, 12);
-        bCtx.fill();
-        bCtx.stroke();
-        bCtx.font = 'bold 22px Outfit, sans-serif';
-        bCtx.fillStyle = '#ffffff';
-        bCtx.textAlign = 'center';
-        bCtx.textBaseline = 'middle';
-        bCtx.fillText(station.name, 128, 32);
-
-        const badgeTex = new THREE.CanvasTexture(badgeCanvas);
-        const badgeMat = new THREE.SpriteMaterial({ map: badgeTex, transparent: true });
-        const badgeSprite = new THREE.Sprite(badgeMat);
-        badgeSprite.position.set(0, 1.2, 0);
-        badgeSprite.scale.set(0.9, 0.225, 1.0);
-        padGroup.add(badgeSprite);
-
         // Raycasting & Interaction Data
-        ringMesh.userData = {
+        outerRingMesh.userData = {
             action: `teleport-${station.id}`,
-            label: `⚡ Teleport to: ${station.name}`
+            label: `⚡ Teleport: ${station.name}`
         };
-        discMesh.userData = ringMesh.userData;
-        beamMesh.userData = ringMesh.userData;
+        midRingMesh.userData = outerRingMesh.userData;
+        discMesh.userData = outerRingMesh.userData;
 
-        interactiveObjects.push(ringMesh);
+        interactiveObjects.push(outerRingMesh);
+        interactiveObjects.push(midRingMesh);
         interactiveObjects.push(discMesh);
-        interactiveObjects.push(beamMesh);
 
         teleportPadsGroup.add(padGroup);
         animatedPads.push({
-            ring: ringMesh,
-            disc: discMesh,
-            beam: beamMesh,
-            badge: badgeSprite,
-            baseY: 1.2
+            outerRing: outerRingMesh,
+            midRing: midRingMesh,
+            disc: discMesh
         });
     });
 }
@@ -1174,9 +1083,14 @@ function teleportToStation(stationId) {
 
     if (renderer.xr.isPresenting) {
         // VR Teleportation: smoothly position user rig
-        xrRig.position.copy(station.vrPos);
+        xrRig.position.set(station.vrPos.x, state.userHeightOffset, station.vrPos.z);
         const lookDir = new THREE.Vector3().subVectors(station.target, station.vrPos);
         xrRig.rotation.y = Math.atan2(-lookDir.x, -lookDir.z);
+
+        // Keep VR menu in front of user upon teleport
+        if (vrMenuRoot && vrMenuRoot.visible) {
+            repositionVRMenuInFrontOfUser();
+        }
     } else {
         // Desktop / Mobile Camera Transition
         camStartPos.copy(camera.position);
@@ -1187,13 +1101,6 @@ function teleportToStation(stationId) {
 
         camTransitionProgress = 0;
         isCameraTransitioning = true;
-    }
-
-    // Move Scientist Avatar to station
-    if (scientistAvatar) {
-        avatarState.targetPos.copy(station.avatarPos);
-        const lookVector = new THREE.Vector3().subVectors(station.avatarLookAt, station.avatarPos);
-        avatarState.targetRotationY = Math.atan2(lookVector.x, lookVector.z);
     }
 
     // Update active UI view button in HUD
@@ -1224,28 +1131,240 @@ function updateCameraTransition(delta) {
     }
 }
 
-// Update Avatar & Teleport Pads in Loop
-function updateAvatarAndPads(delta, elapsedTime) {
-    // 1. Animate Teleportation Pads (pulse & rotation)
+// Update Glowing Ground Circles in Loop
+function updateTeleportPads(delta, elapsedTime) {
     animatedPads.forEach((pad, idx) => {
-        pad.ring.rotation.z += delta * 0.4;
-        const pulse = 0.35 + Math.sin(elapsedTime * 3.0 + idx) * 0.15;
+        pad.outerRing.rotation.z += delta * 0.35;
+        pad.midRing.rotation.z -= delta * 0.5;
+        const pulse = 0.28 + Math.sin(elapsedTime * 2.8 + idx) * 0.14;
         pad.disc.material.opacity = pulse;
-        pad.beam.material.opacity = 0.10 + Math.sin(elapsedTime * 2.5 + idx) * 0.05;
-        pad.badge.position.y = pad.baseY + Math.sin(elapsedTime * 2.0 + idx) * 0.04;
+        pad.outerRing.material.opacity = 0.55 + Math.sin(elapsedTime * 2.0 + idx) * 0.2;
+    });
+}
+
+// =============================================================================
+// IN-VR 3D STATIONARY EXPERIMENT CONTROLLER WORKSTATION
+// =============================================================================
+let vrMenuRoot = null;
+let vrMenuTexture = null;
+let vrMenuCanvas = null;
+let vrMenuCtx = null;
+const vrInteractiveButtons = [];
+
+function createVRInGameMenu() {
+    vrMenuRoot = new THREE.Group();
+    vrMenuRoot.name = 'VR_Stationary_Controller';
+
+    // 1. High Resolution Canvas UI for VR Terminal Display
+    vrMenuCanvas = document.createElement('canvas');
+    vrMenuCanvas.width = 1024;
+    vrMenuCanvas.height = 512;
+    vrMenuCtx = vrMenuCanvas.getContext('2d');
+
+    vrMenuTexture = new THREE.CanvasTexture(vrMenuCanvas);
+    vrMenuTexture.generateMipmaps = true;
+    vrMenuTexture.minFilter = THREE.LinearMipmapLinearFilter;
+
+    // 2. 3D Terminal Screen Panel
+    const panelGeo = new THREE.PlaneGeometry(1.2, 0.6);
+    const panelMat = new THREE.MeshStandardMaterial({
+        map: vrMenuTexture,
+        transparent: true,
+        roughness: 0.2,
+        metalness: 0.1,
+        emissive: 0x061525,
+        emissiveMap: vrMenuTexture,
+        emissiveIntensity: 0.85,
+        side: THREE.DoubleSide
+    });
+    const panelMesh = new THREE.Mesh(panelGeo, panelMat);
+    vrMenuRoot.add(panelMesh);
+
+    // Frame border for terminal
+    const frameGeo = new THREE.BoxGeometry(1.24, 0.64, 0.02);
+    const frameMat = new THREE.MeshStandardMaterial({
+        color: 0x0a1628,
+        roughness: 0.3,
+        metalness: 0.85
+    });
+    const frameMesh = new THREE.Mesh(frameGeo, frameMat);
+    frameMesh.position.z = -0.012;
+    vrMenuRoot.add(frameMesh);
+
+    // Physical Pedestal Stand grounding the terminal permanently at the console
+    const standMat = new THREE.MeshStandardMaterial({
+        color: 0x141f32,
+        roughness: 0.35,
+        metalness: 0.75
+    });
+    const columnMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 1.45, 16), standMat);
+    columnMesh.position.set(0, -0.72, -0.02);
+    vrMenuRoot.add(columnMesh);
+
+    const basePlate = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.04, 24), standMat);
+    basePlate.position.set(0, -1.45, -0.02);
+    vrMenuRoot.add(basePlate);
+
+    // 3. Helper to create interactive 3D Buttons on the terminal
+    function addVRButton(x, y, w, h, action, label, colorHex = 0x00f0ff) {
+        const btnGeo = new THREE.PlaneGeometry(w, h);
+        const btnMat = new THREE.MeshBasicMaterial({
+            color: colorHex,
+            transparent: true,
+            opacity: 0.01,
+            side: THREE.DoubleSide
+        });
+        const btnMesh = new THREE.Mesh(btnGeo, btnMat);
+        btnMesh.position.set(x, y, 0.008);
+        btnMesh.userData = { action, label };
+        vrMenuRoot.add(btnMesh);
+        interactiveObjects.push(btnMesh);
+        vrInteractiveButtons.push({ mesh: btnMesh, action, label });
+    }
+
+    // Top Row: Navigation (Home / Hub, Catalog, Theory)
+    addVRButton(-0.38, 0.18, 0.32, 0.1, 'exit-vr-to-hub', '🏠 Return to Portal Hub', 0x00f0ff);
+    addVRButton(0.0, 0.18, 0.32, 0.1, 'exit-vr-to-catalog', '🔬 Experiments Catalog', 0xa855f7);
+    addVRButton(0.38, 0.18, 0.32, 0.1, 'exit-vr-to-theory', '📚 Quantum Theory', 0xff2d87);
+
+    // Middle Row: Core Controls (Emitter, Detector, Reset, Mode)
+    addVRButton(-0.42, 0.04, 0.24, 0.09, 'toggle-emitter', '⚡ Emitter Toggle', 0x00f0ff);
+    addVRButton(-0.14, 0.04, 0.28, 0.09, 'toggle-detector', '👁️ Detector Toggle', 0xff2d87);
+    addVRButton(0.16, 0.04, 0.24, 0.09, 'reset-screen', '🔄 Clear Screen', 0xffb703);
+    addVRButton(0.42, 0.04, 0.22, 0.09, 'toggle-beam-mode', '🌊 Beam Mode', 0x00ff88);
+
+    // Station Teleport Row
+    addVRButton(-0.45, -0.10, 0.16, 0.08, 'teleport-overview', 'Teleport: Overview', 0x00f0ff);
+    addVRButton(-0.27, -0.10, 0.16, 0.08, 'teleport-console', 'Teleport: Console', 0x00f0ff);
+    addVRButton(-0.09, -0.10, 0.16, 0.08, 'teleport-slits', 'Teleport: Slits', 0x00f0ff);
+    addVRButton(0.09, -0.10, 0.16, 0.08, 'teleport-emitter', 'Teleport: Emitter', 0x00f0ff);
+    addVRButton(0.27, -0.10, 0.16, 0.08, 'teleport-detector', 'Teleport: Detector', 0x00f0ff);
+    addVRButton(0.45, -0.10, 0.16, 0.08, 'teleport-screen', 'Teleport: Screen', 0x00f0ff);
+
+    // Bottom Row: Eye Level & Teleport Shortcuts
+    addVRButton(-0.35, -0.22, 0.24, 0.075, 'vr-height-up', '▲ Raise Eye Level', 0x00f0ff);
+    addVRButton(-0.08, -0.22, 0.24, 0.075, 'vr-height-down', '▼ Lower Eye Level', 0x00f0ff);
+    addVRButton(0.18, -0.22, 0.22, 0.075, 'vr-height-reset', '⟲ Reset Height', 0x94a3b8);
+    addVRButton(0.42, -0.22, 0.22, 0.075, 'teleport-overview', '🔭 Lab Overview', 0x00f0ff);
+
+    // Permanent Stationary Location: Separately in the corner near the experiment control desk
+    vrMenuRoot.position.set(-3.6, 1.45, 2.6);
+    vrMenuRoot.rotation.set(0, 0.45, 0);
+    scene.add(vrMenuRoot);
+
+    updateVRMenuTexture();
+}
+
+function updateVRMenuTexture() {
+    if (!vrMenuCtx || !vrMenuCanvas) return;
+    const w = vrMenuCanvas.width;
+    const h = vrMenuCanvas.height;
+
+    // Background Cyber Glass Panel
+    vrMenuCtx.fillStyle = 'rgba(8, 14, 28, 0.95)';
+    vrMenuCtx.fillRect(0, 0, w, h);
+
+    // Outer Glow Border
+    vrMenuCtx.strokeStyle = '#00f0ff';
+    vrMenuCtx.lineWidth = 4;
+    vrMenuCtx.strokeRect(6, 6, w - 12, h - 12);
+
+    // Header Bar
+    vrMenuCtx.fillStyle = 'rgba(0, 240, 255, 0.12)';
+    vrMenuCtx.fillRect(10, 10, w - 20, 50);
+
+    vrMenuCtx.font = 'bold 22px Outfit, sans-serif';
+    vrMenuCtx.fillStyle = '#00f0ff';
+    vrMenuCtx.textAlign = 'left';
+    vrMenuCtx.fillText('⚡ QUANTUM XR — VR EXPERIMENT CONTROLLER', 25, 42);
+
+    // Status Badge Top Right
+    vrMenuCtx.textAlign = 'right';
+    if (state.detectorActive) {
+        vrMenuCtx.fillStyle = '#ff2d87';
+        vrMenuCtx.fillText('👁️ OBSERVED (Wavefunction Collapsed)', w - 25, 42);
+    } else {
+        vrMenuCtx.fillStyle = '#00ff88';
+        vrMenuCtx.fillText('🌊 WAVE SUPERPOSITION (Interference)', w - 25, 42);
+    }
+
+    // SECTION 1: PRIMARY NAVIGATION BUTTONS (Top Row)
+    drawVRCanvasButton(25, 75, 290, 75, '🏠 EXIT VR TO HUB', '#00f0ff', 'rgba(0, 240, 255, 0.2)');
+    drawVRCanvasButton(340, 75, 340, 75, '🔬 ALL EXPERIMENTS', '#a855f7', 'rgba(168, 85, 247, 0.2)');
+    drawVRCanvasButton(705, 75, 294, 75, '📚 QUANTUM THEORY', '#ff2d87', 'rgba(255, 45, 135, 0.2)');
+
+    // SECTION 2: SIMULATION CONTROLS (Middle Row)
+    const emitterLabel = state.emitterActive ? '⚡ EMITTER: ON' : '⚡ EMITTER: OFF';
+    const emitterColor = state.emitterActive ? '#00f0ff' : '#64748b';
+    drawVRCanvasButton(25, 175, 220, 65, emitterLabel, emitterColor, state.emitterActive ? 'rgba(0, 240, 255, 0.25)' : 'rgba(100, 116, 139, 0.2)');
+
+    const detectorLabel = state.detectorActive ? '👁️ DETECTOR: ON' : '👁️ DETECTOR: OFF';
+    const detectorColor = state.detectorActive ? '#ff2d87' : '#64748b';
+    drawVRCanvasButton(265, 175, 250, 65, detectorLabel, detectorColor, state.detectorActive ? 'rgba(255, 45, 135, 0.25)' : 'rgba(100, 116, 139, 0.2)');
+
+    drawVRCanvasButton(535, 175, 220, 65, '🔄 CLEAR SCREEN', '#ffb703', 'rgba(255, 183, 3, 0.2)');
+
+    const modeLabel = state.beamMode === 'stream' ? '🌊 MODE: STREAM' : '🎯 MODE: SINGLE';
+    drawVRCanvasButton(775, 175, 224, 65, modeLabel, '#00ff88', 'rgba(0, 255, 136, 0.2)');
+
+    // SECTION 3: TELEPORTATION PRESETS (Row 3)
+    vrMenuCtx.font = 'bold 14px Outfit, sans-serif';
+    vrMenuCtx.fillStyle = '#94a3b8';
+    vrMenuCtx.textAlign = 'left';
+    vrMenuCtx.fillText('TELEPORT STATIONS:', 25, 272);
+
+    const stationsList = [
+        { name: 'Overview', x: 25, w: 145 },
+        { name: 'Console', x: 185, w: 145 },
+        { name: 'Slits', x: 345, w: 145 },
+        { name: 'Emitter', x: 505, w: 145 },
+        { name: 'Detector', x: 665, w: 145 },
+        { name: 'Screen', x: 825, w: 174 }
+    ];
+
+    stationsList.forEach(st => {
+        drawVRCanvasButton(st.x, 285, st.w, 60, st.name, '#00f0ff', 'rgba(0, 240, 255, 0.15)', 16);
     });
 
-    // 2. Animate Scientist Avatar
-    if (scientistAvatar) {
-        // Smoothly interpolate position & rotation
-        scientistAvatar.position.lerp(avatarState.targetPos, delta * 4.0);
-        scientistAvatar.rotation.y = THREE.MathUtils.lerp(scientistAvatar.rotation.y, avatarState.targetRotationY, delta * 5.0);
+    // SECTION 4: VIEW HEIGHT & SHORTCUTS (Row 4)
+    vrMenuCtx.font = 'bold 14px Outfit, sans-serif';
+    vrMenuCtx.fillStyle = '#94a3b8';
+    vrMenuCtx.textAlign = 'left';
+    vrMenuCtx.fillText(`EYE LEVEL HEIGHT (+${state.userHeightOffset.toFixed(2)}m):`, 25, 385);
 
-        // Subtle breathing & datapad bob
-        const breathe = Math.sin(elapsedTime * 2.2) * 0.012;
-        scientistAvatar.children[0].position.y = 1.62 + breathe; // head
-    }
+    drawVRCanvasButton(25, 400, 220, 60, '▲ RAISE (+0.15m)', '#00f0ff', 'rgba(0, 240, 255, 0.15)', 16);
+    drawVRCanvasButton(265, 400, 220, 60, '▼ LOWER (-0.15m)', '#00f0ff', 'rgba(0, 240, 255, 0.15)', 16);
+    drawVRCanvasButton(505, 400, 220, 60, '⟲ RESET HEIGHT', '#94a3b8', 'rgba(148, 163, 184, 0.15)', 16);
+    drawVRCanvasButton(745, 400, 254, 60, '🔭 LAB OVERVIEW', '#00f0ff', 'rgba(0, 240, 255, 0.25)', 16);
+
+    // Bottom Telemetry Footer
+    vrMenuCtx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+    vrMenuCtx.fillRect(10, 475, w - 20, 28);
+    vrMenuCtx.font = '12px JetBrains Mono, monospace';
+    vrMenuCtx.fillStyle = '#64748b';
+    vrMenuCtx.textAlign = 'center';
+    vrMenuCtx.fillText(`HITS: ${state.totalHits}  |  WAVELENGTH: ${state.wavelength}nm  |  SLIT SEP: ${state.slitSeparation}mm  |  QUEST SHORTCUT: 'B' / 'Y' TO JUMP TO CONSOLE`, w / 2, 494);
+
+    if (vrMenuTexture) vrMenuTexture.needsUpdate = true;
 }
+
+function drawVRCanvasButton(x, y, w, h, text, strokeColor, bgColor, fontSize = 20) {
+    vrMenuCtx.fillStyle = bgColor;
+    vrMenuCtx.strokeStyle = strokeColor;
+    vrMenuCtx.lineWidth = 2;
+    vrMenuCtx.beginPath();
+    vrMenuCtx.roundRect(x, y, w, h, 8);
+    vrMenuCtx.fill();
+    vrMenuCtx.stroke();
+
+    vrMenuCtx.font = `bold ${fontSize}px Outfit, sans-serif`;
+    vrMenuCtx.fillStyle = strokeColor;
+    vrMenuCtx.textAlign = 'center';
+    vrMenuCtx.textBaseline = 'middle';
+    vrMenuCtx.fillText(text, x + w / 2, y + h / 2);
+}
+
+createVRInGameMenu();
 
 // =============================================================================
 // INTERACTION & RAYCASTING (DESKTOP + VR)
@@ -1259,7 +1378,58 @@ function trigger3DAction(action) {
     ensureAudio();
     if (!action) return;
 
-    if (action.startsWith('teleport-')) {
+    if (action === 'exit-vr-to-hub') {
+        audio.playButtonClick('power');
+        if (renderer.xr.isPresenting) {
+            const session = renderer.xr.getSession();
+            if (session) session.end();
+        }
+        setAppView('portal');
+        return;
+    } else if (action === 'exit-vr-to-catalog') {
+        audio.playButtonClick('power');
+        if (renderer.xr.isPresenting) {
+            const session = renderer.xr.getSession();
+            if (session) session.end();
+        }
+        setAppView('experiments');
+        return;
+    } else if (action === 'exit-vr-to-theory') {
+        audio.playButtonClick('power');
+        if (renderer.xr.isPresenting) {
+            const session = renderer.xr.getSession();
+            if (session) session.end();
+        }
+        setAppView('theory');
+        return;
+    } else if (action === 'toggle-beam-mode') {
+        state.beamMode = (state.beamMode === 'stream' ? 'single' : 'stream');
+        audio.playButtonClick('default');
+        updateVRMenuTexture();
+        return;
+    } else if (action === 'vr-height-up') {
+        state.userHeightOffset = Math.min(2.5, state.userHeightOffset + 0.15);
+        if (renderer.xr.isPresenting) xrRig.position.y = state.userHeightOffset;
+        audio.playButtonClick('default');
+        updateVRMenuTexture();
+        return;
+    } else if (action === 'vr-height-down') {
+        state.userHeightOffset = Math.max(-0.6, state.userHeightOffset - 0.15);
+        if (renderer.xr.isPresenting) xrRig.position.y = state.userHeightOffset;
+        audio.playButtonClick('default');
+        updateVRMenuTexture();
+        return;
+    } else if (action === 'vr-height-reset') {
+        state.userHeightOffset = 0.0;
+        if (renderer.xr.isPresenting) xrRig.position.y = 0.0;
+        audio.playButtonClick('default');
+        updateVRMenuTexture();
+        return;
+    } else if (action === 'summon-vr-menu') {
+        repositionVRMenuInFrontOfUser();
+        audio.playButtonClick('default');
+        return;
+    } else if (action.startsWith('teleport-')) {
         const stationId = action.replace('teleport-', '');
         teleportToStation(stationId);
     } else if (action === 'toggle-emitter') {
@@ -1291,6 +1461,11 @@ function pressButton(btnKey) {
 
 // Mouse Move & Hover
 window.addEventListener('mousemove', (e) => {
+    if (state.currentAppView !== 'experiment') {
+        if (tooltip) tooltip.style.display = 'none';
+        return;
+    }
+
     mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
@@ -1324,7 +1499,7 @@ window.addEventListener('mousemove', (e) => {
 // Click Interaction
 window.addEventListener('click', (e) => {
     // If clicking on UI DOM element, skip 3D raycast
-    if (e.target.closest('#hud') || e.target.closest('#modal-guide') || e.target.closest('#VRButton')) return;
+    if (e.target.closest('.global-navbar') || e.target.closest('.portal-container') || e.target.closest('.theory-container') || e.target.closest('.hud-layer') || e.target.closest('.modal-backdrop') || e.target.closest('#VRButton')) return;
 
     if (hoveredObject && hoveredObject.userData && hoveredObject.userData.action) {
         trigger3DAction(hoveredObject.userData.action);
@@ -1333,6 +1508,7 @@ window.addEventListener('click', (e) => {
 
 // Keyboard Shortcuts
 window.addEventListener('keydown', (e) => {
+    if (state.currentAppView !== 'experiment') return;
     if (e.code === 'Space') {
         e.preventDefault();
         trigger3DAction('toggle-emitter');
@@ -1344,7 +1520,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // =============================================================================
-// WEBXR VR CONTROLLER SETUP
+// WEBXR VR CONTROLLER SETUP & POINTER LASERS
 // =============================================================================
 const controller1 = renderer.xr.getController(0);
 const controller2 = renderer.xr.getController(1);
@@ -1352,14 +1528,24 @@ const controller2 = renderer.xr.getController(1);
 function buildControllerRay() {
     const lineGeo = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, 0, -3.5)
+        new THREE.Vector3(0, 0, -4.5)
     ]);
     const lineMat = new THREE.LineBasicMaterial({
         color: 0x00f0ff,
         transparent: true,
-        opacity: 0.6
+        opacity: 0.75
     });
-    return new THREE.Line(lineGeo, lineMat);
+    const line = new THREE.Line(lineGeo, lineMat);
+
+    // Glowing tip pointer
+    const tipMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.012, 12, 12),
+        new THREE.MeshBasicMaterial({ color: 0x00f0ff })
+    );
+    tipMesh.position.set(0, 0, -4.5);
+    line.add(tipMesh);
+
+    return line;
 }
 
 const ray1 = buildControllerRay();
@@ -1386,6 +1572,18 @@ function onVRSelect(e) {
         }
         if (hitObj && hitObj.userData && hitObj.userData.action) {
             trigger3DAction(hitObj.userData.action);
+
+            // Controller Haptic Pulse
+            const session = renderer.xr.getSession();
+            if (session) {
+                for (const source of session.inputSources) {
+                    if (source.gamepad && source.gamepad.hapticActuators && source.gamepad.hapticActuators[0]) {
+                        try {
+                            source.gamepad.hapticActuators[0].pulse(0.6, 50);
+                        } catch (err) {}
+                    }
+                }
+            }
         }
     }
 }
@@ -1393,19 +1591,24 @@ function onVRSelect(e) {
 controller1.addEventListener('select', onVRSelect);
 controller2.addEventListener('select', onVRSelect);
 
-// VR Thumbstick Smooth Locomotion & Snap Turning
+// VR Thumbstick Movement, Snap Turn & Quest Button Shortcuts
 let snapTurnCooldown = 0;
+let buttonCooldown = 0;
 
 function handleVRMovement(delta) {
     const session = renderer.xr.getSession();
     if (!session) return;
 
+    buttonCooldown -= delta;
+
     for (const source of session.inputSources) {
         if (!source.gamepad) continue;
         const axes = source.gamepad.axes;
-        // Standard XR Gamepad: axes[2] is Thumbstick X, axes[3] is Thumbstick Y
-        const stickX = axes[2] !== undefined ? axes[2] : 0;
-        const stickY = axes[3] !== undefined ? axes[3] : 0;
+        const buttons = source.gamepad.buttons;
+
+        // Thumbstick axes
+        const stickX = axes[2] !== undefined ? axes[2] : (axes[0] || 0);
+        const stickY = axes[3] !== undefined ? axes[3] : (axes[1] || 0);
 
         if (source.handedness === 'left') {
             // Left Stick: Move in facing direction
@@ -1421,6 +1624,17 @@ function handleVRMovement(delta) {
                 xrRig.position.addScaledVector(camDir, -stickY * moveSpeed);
                 xrRig.position.addScaledVector(camSide, stickX * moveSpeed);
             }
+
+            // Left 'X' button: Toggle Emitter
+            if (buttons[4] && buttons[4].pressed && buttonCooldown <= 0) {
+                trigger3DAction('toggle-emitter');
+                buttonCooldown = 0.35;
+            }
+            // Left 'Y' button or Menu button: Jump to Console Workstation
+            if ((buttons[5]?.pressed || buttons[3]?.pressed) && buttonCooldown <= 0) {
+                teleportToStation('console');
+                buttonCooldown = 0.35;
+            }
         } else if (source.handedness === 'right') {
             // Right Stick: Snap Turn (30 degrees)
             snapTurnCooldown -= delta;
@@ -1429,15 +1643,417 @@ function handleVRMovement(delta) {
                 xrRig.rotateY(angle);
                 snapTurnCooldown = 0.35;
             }
+
+            // Right Stick Y: Smooth User Height Adjustment in VR
+            if (Math.abs(stickY) > 0.25) {
+                state.userHeightOffset = Math.max(-0.6, Math.min(2.5, state.userHeightOffset - stickY * delta * 1.2));
+                xrRig.position.y = state.userHeightOffset;
+                updateVRMenuTexture();
+            }
+
+            // Right 'A' button: Toggle Detector
+            if (buttons[4] && buttons[4].pressed && buttonCooldown <= 0) {
+                trigger3DAction('toggle-detector');
+                buttonCooldown = 0.35;
+            }
+            // Right 'B' button: Jump to Console Workstation
+            if (buttons[5] && buttons[5].pressed && buttonCooldown <= 0) {
+                teleportToStation('console');
+                buttonCooldown = 0.35;
+            }
         }
     }
+}
+
+// =============================================================================
+// APP VIEW ROUTER & NAVIGATION (PORTAL / EXPERIMENTS CATALOG / 3D SIM / THEORY)
+// =============================================================================
+function setAppView(view) {
+    state.currentAppView = view;
+    document.body.className = `app-mode-${view}`;
+
+    const portalEl = document.getElementById('portal-view');
+    const catalogEl = document.getElementById('experiments-catalog-view');
+    const hudEl = document.getElementById('experiment-hud');
+    const theoryEl = document.getElementById('theory-view');
+
+    const isPortal = (view === 'portal');
+    const isCatalog = (view === 'experiments');
+    const isExperiment = (view === 'experiment' || view === 'experiment-ydse');
+    const isTheory = (view === 'theory');
+
+    if (portalEl) {
+        portalEl.classList.toggle('active', isPortal);
+        portalEl.classList.toggle('hidden', !isPortal);
+    }
+    if (catalogEl) {
+        catalogEl.classList.toggle('active', isCatalog);
+        catalogEl.classList.toggle('hidden', !isCatalog);
+    }
+    if (hudEl) {
+        hudEl.classList.toggle('hidden', !isExperiment);
+    }
+    if (theoryEl) {
+        theoryEl.classList.toggle('hidden', !isTheory);
+    }
+
+    // Update Nav Tabs
+    document.getElementById('nav-tab-portal')?.classList.toggle('active', isPortal);
+    document.getElementById('nav-tab-portal')?.setAttribute('aria-selected', isPortal);
+
+    document.getElementById('nav-tab-experiment')?.classList.toggle('active', isCatalog || isExperiment);
+    document.getElementById('nav-tab-experiment')?.setAttribute('aria-selected', isCatalog || isExperiment);
+
+    document.getElementById('nav-tab-theory')?.classList.toggle('active', isTheory);
+    document.getElementById('nav-tab-theory')?.setAttribute('aria-selected', isTheory);
+
+    ensureAudio();
+
+    if (isExperiment) {
+        updateVisualState();
+        updateHUDStats();
+        updateIntensityGraph();
+    } else if (isTheory) {
+        updateTheoryCalculator();
+    } else if (isPortal || isCatalog) {
+        if (!renderer.xr.isPresenting && !isCameraTransitioning) {
+            switchCameraView('overview');
+        }
+    }
+}
+
+// =============================================================================
+// THEORY INTERACTIVE MODULES & CALCULATOR
+// =============================================================================
+const theoryFringeCanvas = document.getElementById('theory-fringe-canvas');
+const theoryFringeCtx = theoryFringeCanvas ? theoryFringeCanvas.getContext('2d') : null;
+
+function updateTheoryCalculator() {
+    const wlInput = document.getElementById('theory-slider-wl');
+    const slitInput = document.getElementById('theory-slider-slit');
+    const distInput = document.getElementById('theory-slider-dist');
+    const widthInput = document.getElementById('theory-slider-width');
+
+    if (!wlInput || !slitInput || !distInput || !widthInput) return;
+
+    const lambdaNm = parseFloat(wlInput.value); // nm
+    const dMm = parseFloat(slitInput.value);     // mm
+    const DM = parseFloat(distInput.value);       // m
+    const aMm = parseFloat(widthInput.value);    // mm
+
+    const valWl = document.getElementById('theory-val-wl');
+    const valSlit = document.getElementById('theory-val-slit');
+    const valDist = document.getElementById('theory-val-dist');
+    const valWidth = document.getElementById('theory-val-width');
+
+    if (valWl) valWl.textContent = `${lambdaNm} nm`;
+    if (valSlit) valSlit.textContent = `${dMm.toFixed(2)} mm`;
+    if (valDist) valDist.textContent = `${DM.toFixed(2)} m`;
+    if (valWidth) valWidth.textContent = `${aMm.toFixed(2)} mm`;
+
+    // Fringe Width beta = (lambda * D) / d
+    const betaMm = ((lambdaNm * 1e-9 * DM) / (dMm * 1e-3)) * 1000;
+    const centralEnvelopeMm = ((2 * lambdaNm * 1e-9 * DM) / (aMm * 1e-3)) * 1000;
+    const y1Mm = betaMm / 2;
+    const numFringes = Math.max(1, Math.round((2 * dMm) / aMm) - 1);
+
+    const calcFringe = document.getElementById('theory-calc-fringe');
+    const metricBeta = document.getElementById('theory-metric-beta');
+    const metricEnv = document.getElementById('theory-metric-envelope');
+    const metricY1 = document.getElementById('theory-metric-y1');
+    const metricFringes = document.getElementById('theory-metric-fringes');
+
+    if (calcFringe) calcFringe.textContent = betaMm.toFixed(2);
+    if (metricBeta) metricBeta.textContent = `${betaMm.toFixed(3)} mm`;
+    if (metricEnv) metricEnv.textContent = `${centralEnvelopeMm.toFixed(2)} mm`;
+    if (metricY1) metricY1.textContent = `±${y1Mm.toFixed(3)} mm`;
+    if (metricFringes) metricFringes.textContent = `~${numFringes} bands`;
+
+    const topFringe = document.getElementById('val-fringe-width-top');
+    if (topFringe) topFringe.textContent = `${betaMm.toFixed(2)} mm`;
+
+    // Render Canvas
+    if (!theoryFringeCtx || !theoryFringeCanvas) return;
+    const w = theoryFringeCanvas.width;
+    const h = theoryFringeCanvas.height;
+
+    theoryFringeCtx.fillStyle = '#03060e';
+    theoryFringeCtx.fillRect(0, 0, w, h);
+
+    // Axes & grid lines
+    theoryFringeCtx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    theoryFringeCtx.lineWidth = 1;
+    theoryFringeCtx.beginPath();
+    theoryFringeCtx.moveTo(w / 2, 0);
+    theoryFringeCtx.lineTo(w / 2, h);
+    theoryFringeCtx.moveTo(0, h - 25);
+    theoryFringeCtx.lineTo(w, h - 25);
+    theoryFringeCtx.stroke();
+
+    // Plot Envelope (diffraction sinc^2) in dashed amber
+    theoryFringeCtx.beginPath();
+    theoryFringeCtx.strokeStyle = 'rgba(255, 183, 3, 0.5)';
+    theoryFringeCtx.setLineDash([4, 4]);
+    theoryFringeCtx.lineWidth = 1.5;
+
+    const spanMm = 6.0; // +/- 3mm span
+    for (let px = 0; px < w; px++) {
+        const yMm = ((px / w) * 2 - 1) * (spanMm / 2);
+        const yM = yMm * 1e-3;
+        const alpha = (Math.PI * (aMm * 1e-3) * yM) / (lambdaNm * 1e-9 * DM);
+        const sinc = alpha === 0 ? 1 : Math.sin(alpha) / alpha;
+        const env = sinc * sinc;
+
+        const plotY = (h - 26) - env * (h - 55);
+        if (px === 0) theoryFringeCtx.moveTo(px, plotY);
+        else theoryFringeCtx.lineTo(px, plotY);
+    }
+    theoryFringeCtx.stroke();
+    theoryFringeCtx.setLineDash([]);
+
+    // Plot Full Theoretical Intensity Curve
+    theoryFringeCtx.beginPath();
+    theoryFringeCtx.strokeStyle = '#00f0ff';
+    theoryFringeCtx.lineWidth = 2.2;
+    theoryFringeCtx.shadowColor = 'rgba(0, 240, 255, 0.6)';
+    theoryFringeCtx.shadowBlur = 8;
+
+    for (let px = 0; px < w; px++) {
+        const yMm = ((px / w) * 2 - 1) * (spanMm / 2);
+        const yM = yMm * 1e-3;
+
+        const betaPhase = (Math.PI * (dMm * 1e-3) * yM) / (lambdaNm * 1e-9 * DM);
+        const alpha = (Math.PI * (aMm * 1e-3) * yM) / (lambdaNm * 1e-9 * DM);
+        const sinc = alpha === 0 ? 1 : Math.sin(alpha) / alpha;
+        const intensity = Math.cos(betaPhase) * Math.cos(betaPhase) * (sinc * sinc);
+
+        const plotY = (h - 26) - intensity * (h - 55);
+        if (px === 0) theoryFringeCtx.moveTo(px, plotY);
+        else theoryFringeCtx.lineTo(px, plotY);
+    }
+    theoryFringeCtx.stroke();
+    theoryFringeCtx.shadowBlur = 0;
+
+    // Axis Labels
+    theoryFringeCtx.fillStyle = '#64748b';
+    theoryFringeCtx.font = '10px JetBrains Mono, monospace';
+    theoryFringeCtx.fillText('-3 mm', 8, h - 8);
+    theoryFringeCtx.fillText('Center (y=0)', w / 2 - 32, h - 8);
+    theoryFringeCtx.fillText('+3 mm', w - 44, h - 8);
+}
+
+// 2D Wave vs Particle Simulator inside Theory (Chapter 2)
+const theoryWaveCanvas = document.getElementById('theory-wave-canvas');
+const theoryWaveCtx = theoryWaveCanvas ? theoryWaveCanvas.getContext('2d') : null;
+let theoryObserverActive = false;
+let theorySimTime = 0;
+
+function drawTheoryWaveSim() {
+    if (!theoryWaveCtx || !theoryWaveCanvas || state.currentAppView !== 'theory') return;
+
+    const w = theoryWaveCanvas.width;
+    const h = theoryWaveCanvas.height;
+
+    theoryWaveCtx.fillStyle = '#03060d';
+    theoryWaveCtx.fillRect(0, 0, w, h);
+
+    const slitX = 90;
+    const screenX = w - 40;
+    const slitSpacing = 44;
+    const s1Y = h / 2 - slitSpacing / 2;
+    const s2Y = h / 2 + slitSpacing / 2;
+
+    // Source Beam Emitter on Left
+    theoryWaveCtx.fillStyle = '#00f0ff';
+    theoryWaveCtx.fillRect(10, h / 2 - 6, 30, 12);
+    theoryWaveCtx.beginPath();
+    theoryWaveCtx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
+    theoryWaveCtx.lineWidth = 2;
+    for (let x = 40; x < slitX; x += 12) {
+        const offset = (theorySimTime * 60) % 12;
+        theoryWaveCtx.moveTo(x + offset, h / 2 - 20);
+        theoryWaveCtx.lineTo(x + offset, h / 2 + 20);
+    }
+    theoryWaveCtx.stroke();
+
+    // Slit Barrier
+    theoryWaveCtx.fillStyle = '#1e293b';
+    theoryWaveCtx.fillRect(slitX - 6, 0, 12, s1Y - 8);
+    theoryWaveCtx.fillRect(slitX - 6, s1Y + 8, 12, s2Y - s1Y - 16);
+    theoryWaveCtx.fillRect(slitX - 6, s2Y + 8, 12, h - (s2Y + 8));
+
+    // Slit Aperture Glows
+    theoryWaveCtx.fillStyle = theoryObserverActive ? '#ff2d87' : '#00f0ff';
+    theoryWaveCtx.beginPath();
+    theoryWaveCtx.arc(slitX, s1Y, 4, 0, Math.PI * 2);
+    theoryWaveCtx.arc(slitX, s2Y, 4, 0, Math.PI * 2);
+    theoryWaveCtx.fill();
+
+    // If Observer Active, draw detector badge
+    if (theoryObserverActive) {
+        theoryWaveCtx.fillStyle = '#ff2d87';
+        theoryWaveCtx.font = 'bold 12px Outfit, sans-serif';
+        theoryWaveCtx.fillText('👁️ OBSERVER ACTIVE', slitX - 25, s1Y - 14);
+    }
+
+    if (!theoryObserverActive) {
+        // Wave Superposition: concentric ripples
+        const k = 0.18;
+        const omega = 4.0;
+        const t = theorySimTime;
+
+        const step = 4;
+        for (let x = slitX + 6; x < screenX; x += step) {
+            for (let y = 10; y < h - 10; y += step) {
+                const r1 = Math.hypot(x - slitX, y - s1Y);
+                const r2 = Math.hypot(x - slitX, y - s2Y);
+
+                const psi1 = Math.sin(k * r1 - omega * t) / Math.sqrt(r1 * 0.1 + 1);
+                const psi2 = Math.sin(k * r2 - omega * t) / Math.sqrt(r2 * 0.1 + 1);
+                const totalPsi = psi1 + psi2;
+                const intensity = (totalPsi * totalPsi) * 0.25;
+
+                if (intensity > 0.08) {
+                    const alpha = Math.min(1.0, intensity * 0.85);
+                    theoryWaveCtx.fillStyle = `rgba(0, 240, 255, ${alpha.toFixed(2)})`;
+                    theoryWaveCtx.fillRect(x, y, step, step);
+                }
+            }
+        }
+    } else {
+        // Observer ON: Collimated classical rays
+        const t = theorySimTime * 1.5;
+        theoryWaveCtx.fillStyle = 'rgba(255, 45, 135, 0.85)';
+        for (let i = 0; i < 24; i++) {
+            const seed = (i * 137.5) % 1;
+            const chosenSlitY = i % 2 === 0 ? s1Y : s2Y;
+            const progress = (t + seed) % 1.0;
+            const x = slitX + progress * (screenX - slitX);
+            const spread = (Math.sin(i * 99) * 14) * progress;
+            const y = chosenSlitY + spread;
+
+            theoryWaveCtx.beginPath();
+            theoryWaveCtx.arc(x, y, 2.5, 0, Math.PI * 2);
+            theoryWaveCtx.fill();
+        }
+    }
+
+    // Phosphor Screen on Right
+    theoryWaveCtx.fillStyle = '#091510';
+    theoryWaveCtx.strokeStyle = 'rgba(0, 255, 136, 0.4)';
+    theoryWaveCtx.lineWidth = 2;
+    theoryWaveCtx.fillRect(screenX, 10, 14, h - 20);
+    theoryWaveCtx.strokeRect(screenX, 10, 14, h - 20);
+
+    // Profile curve on right screen
+    theoryWaveCtx.beginPath();
+    theoryWaveCtx.strokeStyle = theoryObserverActive ? '#ff2d87' : '#00ff88';
+    theoryWaveCtx.lineWidth = 2;
+    for (let y = 15; y < h - 15; y += 2) {
+        const normY = (y - h / 2);
+        let profile = 0;
+        if (!theoryObserverActive) {
+            const phase = (Math.PI * slitSpacing * normY) / 1200;
+            profile = Math.cos(phase) * Math.cos(phase) * Math.exp(-Math.pow(normY / 55, 2));
+        } else {
+            const g1 = Math.exp(-Math.pow((y - s1Y) / 16, 2));
+            const g2 = Math.exp(-Math.pow((y - s2Y) / 16, 2));
+            profile = (g1 + g2) * 0.5;
+        }
+        const px = screenX + 14 + profile * 20;
+        if (y === 15) theoryWaveCtx.moveTo(px, y);
+        else theoryWaveCtx.lineTo(px, y);
+    }
+    theoryWaveCtx.stroke();
 }
 
 // =============================================================================
 // DOM UI EVENT LISTENERS & BINDINGS
 // =============================================================================
 function initUIBindings() {
-    // Action Buttons
+    // 1. Entrance Portal Launch Actions
+    document.getElementById('btn-enter-experiment')?.addEventListener('click', () => setAppView('experiments'));
+    document.getElementById('portal-card-experiment')?.addEventListener('click', () => setAppView('experiments'));
+    document.getElementById('btn-enter-theory')?.addEventListener('click', () => setAppView('theory'));
+    document.getElementById('portal-card-theory')?.addEventListener('click', () => setAppView('theory'));
+
+    // 2. Experiments Catalog Actions
+    document.getElementById('btn-enter-ydse')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setAppView('experiment');
+    });
+    document.getElementById('card-exp-ydse')?.addEventListener('click', () => setAppView('experiment'));
+    document.getElementById('btn-catalog-back-hub')?.addEventListener('click', () => setAppView('portal'));
+    document.getElementById('btn-back-to-catalog')?.addEventListener('click', () => setAppView('experiments'));
+
+    // 3. Global Navigation Header Tabs
+    document.getElementById('nav-brand-home')?.addEventListener('click', () => setAppView('portal'));
+    document.getElementById('nav-tab-portal')?.addEventListener('click', () => setAppView('portal'));
+    document.getElementById('nav-tab-experiment')?.addEventListener('click', () => setAppView('experiments'));
+    document.getElementById('nav-tab-theory')?.addEventListener('click', () => setAppView('theory'));
+
+    // 4. Theory Sidebar & Chapter Switcher
+    document.querySelectorAll('.chapter-nav-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const chapterNum = btn.dataset.chapter;
+            if (!chapterNum) return;
+
+            document.querySelectorAll('.chapter-nav-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            document.querySelectorAll('.theory-article').forEach(art => art.classList.remove('active'));
+            const targetArt = document.getElementById(`chapter-${chapterNum}`);
+            if (targetArt) targetArt.classList.add('active');
+
+            if (chapterNum === '6') {
+                updateTheoryCalculator();
+            }
+        });
+    });
+
+    document.getElementById('theory-btn-launch-lab')?.addEventListener('click', () => setAppView('experiment'));
+
+    // 5. Theory Interactive Wave Observer Toggle
+    document.getElementById('theory-toggle-state')?.addEventListener('click', () => {
+        theoryObserverActive = !theoryObserverActive;
+        const lbl = document.getElementById('theory-state-label');
+        if (lbl) {
+            lbl.textContent = theoryObserverActive ? 'ON (Which-Way Observer)' : 'OFF (Wave Superposition)';
+            lbl.className = theoryObserverActive ? 'text-magenta' : 'text-cyan';
+        }
+    });
+
+    // 6. Theory Calculator Sliders
+    ['theory-slider-wl', 'theory-slider-slit', 'theory-slider-dist', 'theory-slider-width'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', updateTheoryCalculator);
+    });
+
+    // 7. Sync Theory Parameters to 3D Lab
+    document.getElementById('theory-btn-sync-lab')?.addEventListener('click', () => {
+        const wlInput = document.getElementById('theory-slider-wl');
+        const slitInput = document.getElementById('theory-slider-slit');
+
+        if (wlInput) {
+            state.wavelength = parseFloat(wlInput.value);
+            const sliderWl = document.getElementById('slider-wavelength');
+            const valWl = document.getElementById('val-wavelength');
+            if (sliderWl) sliderWl.value = state.wavelength;
+            if (valWl) valWl.textContent = `${state.wavelength} nm`;
+        }
+
+        if (slitInput) {
+            state.slitSeparation = parseFloat(slitInput.value);
+            const sliderSlit = document.getElementById('slider-slit-dist');
+            const valSlit = document.getElementById('val-slit-dist');
+            if (sliderSlit) sliderSlit.value = state.slitSeparation;
+            if (valSlit) valSlit.textContent = `${state.slitSeparation.toFixed(2)} mm`;
+        }
+
+        updateVisualState();
+        setAppView('experiment');
+    });
+
+    // 8. Experiment Action Buttons
     document.getElementById('ui-btn-emitter')?.addEventListener('click', () => trigger3DAction('toggle-emitter'));
     document.getElementById('ui-btn-detector')?.addEventListener('click', () => trigger3DAction('toggle-detector'));
     document.getElementById('ui-btn-reset')?.addEventListener('click', () => trigger3DAction('reset-screen'));
@@ -1487,29 +2103,47 @@ function initUIBindings() {
         document.getElementById('mode-stream')?.classList.remove('active');
     });
 
-    // Sliders
+    // Experiment Sliders
     const rateSlider = document.getElementById('slider-rate');
     rateSlider?.addEventListener('input', (e) => {
         state.emissionRate = parseFloat(e.target.value);
-        document.getElementById('val-rate').textContent = `${state.emissionRate} /s`;
+        const valRate = document.getElementById('val-rate');
+        if (valRate) valRate.textContent = `${state.emissionRate} /s`;
     });
 
     const wlSlider = document.getElementById('slider-wavelength');
     wlSlider?.addEventListener('input', (e) => {
         state.wavelength = parseFloat(e.target.value);
-        document.getElementById('val-wavelength').textContent = `${state.wavelength} nm`;
+        const valWl = document.getElementById('val-wavelength');
+        if (valWl) valWl.textContent = `${state.wavelength} nm`;
         updateVisualState();
     });
 
     const slitSlider = document.getElementById('slider-slit-dist');
     slitSlider?.addEventListener('input', (e) => {
         state.slitSeparation = parseFloat(e.target.value);
-        document.getElementById('val-slit-dist').textContent = `${state.slitSeparation.toFixed(2)} mm`;
+        const valSlit = document.getElementById('val-slit-dist');
+        if (valSlit) valSlit.textContent = `${state.slitSeparation.toFixed(2)} mm`;
         updateVisualState();
     });
+
+    const scaleSlider = document.getElementById('slider-user-scale');
+    scaleSlider?.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        state.userScale = val;
+        state.userHeightOffset = (val - 1.0) * 1.6;
+        const valScale = document.getElementById('val-user-scale');
+        if (valScale) valScale.textContent = `${val.toFixed(2)}x (+${state.userHeightOffset.toFixed(2)}m)`;
+
+        if (renderer.xr.isPresenting) {
+            xrRig.position.y = state.userHeightOffset;
+        }
+    });
 }
+
 initUIBindings();
 updateVisualState();
+setAppView(state.currentAppView);
 
 // =============================================================================
 // WINDOW RESIZE
@@ -1519,6 +2153,9 @@ window.addEventListener('resize', () => {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     updateIntensityGraph();
+    if (state.currentAppView === 'theory') {
+        updateTheoryCalculator();
+    }
 });
 
 // =============================================================================
@@ -1545,23 +2182,30 @@ renderer.setAnimationLoop(() => {
     // 3. Dynamic Particle Simulation
     updateParticles(delta);
 
-    // 4. Animate Holographic Teleport Pads & Scientist Avatar
-    updateAvatarAndPads(delta, elapsedTime);
+    // 4. Animate Holographic Teleport Pads
+    updateTeleportPads(delta, elapsedTime);
 
-    // 5. Subtle Ambient Pulsing Lights
+    // 5. Ambient Dynamic Pulsing Lights
     if (state.emitterActive) {
-        emitterLight.intensity = 2.2 + Math.sin(elapsedTime * 6.0) * 0.3;
+        emitterLight.intensity = 2.6 + Math.sin(elapsedTime * 6.0) * 0.3;
     }
     if (state.detectorActive) {
-        detectorLight.intensity = 2.8 + Math.sin(elapsedTime * 12.0) * 0.5;
+        detectorLight.intensity = 3.2 + Math.sin(elapsedTime * 12.0) * 0.5;
     }
 
-    // 5. Controls & Rendering
+    // 6. Animate Theory Wave Canvas if Theory View Active
+    if (state.currentAppView === 'theory') {
+        theorySimTime += delta;
+        drawTheoryWaveSim();
+    }
+
+    // 7. WebXR Controls & Rendering
     if (renderer.xr.isPresenting) {
         handleVRMovement(delta);
     } else {
-        updateCameraTransition(delta);
-        controls.update();
+        if (state.currentAppView === 'experiment' || state.currentAppView === 'experiment-ydse') {
+            controls.update();
+        }
     }
 
     renderer.render(scene, camera);
