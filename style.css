@@ -996,17 +996,21 @@ canvas {
 /* Left Dock: Intensity Graph */
 .intensity-panel {
     position: fixed;
-    top: 140px;
-    left: 24px;
-    width: 360px;
-    padding: 14px 16px;
+    top: 90px;
+    left: 20px;
+    width: 330px;
+    max-height: calc(100vh - 165px);
+    overflow-y: auto;
+    padding: 12px 14px;
     pointer-events: auto;
     z-index: 30;
     transition: transform var(--transition-smooth), opacity var(--transition-smooth);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 255, 136, 0.3) rgba(0, 0, 0, 0.2);
 }
 
 .intensity-panel.collapsed {
-    transform: translateX(-310px);
+    transform: translateX(-285px);
 }
 
 .panel-header {
@@ -1047,16 +1051,92 @@ canvas {
 }
 
 .graph-container {
-    background: rgba(4, 7, 14, 0.7);
+    background: rgba(4, 7, 14, 0.85);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: var(--radius-sm);
     padding: 8px;
     margin-bottom: 8px;
 }
 
+/* Optical Laser Interference Screen Preview */
+.fringe-screen-container {
+    background: #000000;
+    border: 1px solid rgba(0, 255, 136, 0.25);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    margin-bottom: 6px;
+    box-shadow: 0 0 14px rgba(0, 255, 136, 0.08), inset 0 0 14px rgba(0, 0, 0, 0.9);
+}
+
+.fringe-screen-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 8px;
+    background: rgba(10, 16, 26, 0.9);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    font-size: 10px;
+    letter-spacing: 0.6px;
+    color: var(--text-secondary);
+}
+
+.fringe-screen-title {
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    color: #e2e8f0;
+}
+
+.fringe-color-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: #cbd5e1;
+}
+
+.fringe-color-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #00ff88;
+    box-shadow: 0 0 8px #00ff88;
+    display: inline-block;
+    transition: background-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+#fringe-screen-canvas {
+    width: 100%;
+    height: 88px;
+    display: block;
+    background: #000000;
+}
+
+.graph-divider {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 5px 0 3px;
+    position: relative;
+}
+
+.graph-divider::before,
+.graph-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.divider-label {
+    padding: 0 8px;
+    font-size: 9px;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+}
+
 #intensity-canvas {
     width: 100%;
-    height: 140px;
+    height: 120px;
     display: block;
 }
 

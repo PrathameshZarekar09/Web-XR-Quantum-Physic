@@ -369,9 +369,25 @@
             </div>
             
             <div class="graph-container">
-                <canvas id="intensity-canvas" width="340" height="180"></canvas>
+                <!-- Optical Interference Pattern Screen (Real Laser Projection) -->
+                <div class="fringe-screen-container">
+                    <div class="fringe-screen-header">
+                        <span class="fringe-screen-title">INTERFERENCE PATTERN</span>
+                        <div class="fringe-color-indicator font-mono">
+                            <span class="fringe-color-dot" id="fringe-color-dot"></span>
+                            <span id="fringe-wavelength-label">500 nm</span>
+                        </div>
+                    </div>
+                    <canvas id="fringe-screen-canvas" width="340" height="96"></canvas>
+                </div>
+
+                <div class="graph-divider">
+                    <span class="divider-label font-mono">CROSS-SECTION PROFILE $I(y)$</span>
+                </div>
+
+                <canvas id="intensity-canvas" width="340" height="120"></canvas>
                 <div class="graph-legend">
-                    <span class="legend-item"><span class="legend-color cyan"></span> Measured Screen Hits</span>
+                    <span class="legend-item"><span class="legend-color cyan"></span> Measured Hits</span>
                     <span class="legend-item"><span class="legend-color pink"></span> Theoretical $\psi^*\psi$</span>
                 </div>
             </div>

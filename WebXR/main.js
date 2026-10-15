@@ -16,7 +16,7 @@ const state = {
     wavelength: 500,    // nm
     slitSeparation: 0.28, // mm (physical model distance roughly 0.28m mapped)
     slitWidth: 0.06,
-    screenDistance: 5.3,
+    screenDistance: 6.6,
     totalHits: 0,
     audioEnabled: false,
     audioMuted: false,
@@ -196,10 +196,10 @@ scene.background = new THREE.Color(0x0a0f1d);
 scene.fog = new THREE.FogExp2(0x0a0f1d, 0.018);
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.05, 100);
-camera.position.set(0, 2.4, 4.8);
+camera.position.set(1.0, 2.7, 5.8);
 
 const xrRig = new THREE.Group();
-xrRig.position.set(0, 0, 3.2); // Positioned directly in front of the optical bench
+xrRig.position.set(0, 0, 0); // Keep at world origin in non-VR so controls.target and camera.position operate 1:1 in true world coordinates
 scene.add(xrRig);
 xrRig.add(camera);
 
@@ -221,7 +221,7 @@ scene.environment = pmremGenerator.fromScene(roomEnvironment, 0.04).texture;
 
 // Reset XR Rig when entering VR session
 renderer.xr.addEventListener('sessionstart', () => {
-    xrRig.position.set(0, state.userHeightOffset, 3.2);
+    xrRig.position.set(1.0, state.userHeightOffset, 4.0);
     xrRig.rotation.set(0, 0, 0);
     if (vrMenuRoot) {
         updateVRMenuTexture();
@@ -229,6 +229,7 @@ renderer.xr.addEventListener('sessionstart', () => {
 });
 
 renderer.xr.addEventListener('sessionend', () => {
+    xrRig.position.set(0, 0, 0);
     setAppView(state.currentAppView);
 });
 
@@ -238,7 +239,7 @@ document.body.appendChild(vrBtn);
 
 // Orbit Controls
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 2.0, 0);
+controls.target.set(1.0, 2.1, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
 controls.maxPolarAngle = Math.PI / 2 - 0.02; // prevent going below floor
@@ -298,7 +299,7 @@ detectorLight.position.set(3.0, 2.45, 0.5);
 scene.add(detectorLight);
 
 const screenGlowLight = new THREE.PointLight(0x00ff88, 1.6, 4.5);
-screenGlowLight.position.set(5.1, 2.7, 0);
+screenGlowLight.position.set(6.38, 2.7, 0);
 scene.add(screenGlowLight);
 
 // Pendant Lamps
@@ -309,6 +310,124 @@ scene.add(screenGlowLight);
 });
 
 // =============================================================================
+// UNIFIED LASER COLOR (CONSISTENT LASER GREEN AS IN REFERENCE IMAGE)
+// =============================================================================
+function wavelengthToRGB(wl) {
+    // Keep unified laser green matching the reference image (#00ff88)
+    const R = 0;
+    const G = 255;
+    const B = 136;
+    const hex = 0x00ff88;
+    return { r: R, g: G, b: B, hex: hex, css: `rgb(${R}, ${G}, ${B})` };
+}
+
+function wavelengthToHex(wl) {
+    return 0x00ff88;
+}
+
+// =============================================================================
+// REALISTIC OPTICAL LASER INTERFERENCE FRINGE PATTERN RENDERER
+// Generates high-fidelity vertical diffraction & interference fringes
+// with core laser bloom, vertical Gaussian beam fade, and matching spectral color
+// =============================================================================
+function renderOpticalFringePattern(canvas, ctx, options = {}) {
+    if (!canvas || !ctx) return;
+    const w = canvas.width;
+    const h = canvas.height;
+
+    const wl = options.wavelength !== undefined ? options.wavelength : state.wavelength;
+    const dMm = options.slitSeparation !== undefined ? options.slitSeparation : state.slitSeparation;
+    const aMm = options.slitWidth !== undefined ? options.slitWidth : state.slitWidth;
+    const DM = options.screenDistance !== undefined ? options.screenDistance : state.screenDistance;
+    const detectorActive = options.detectorActive !== undefined ? options.detectorActive : state.detectorActive;
+    const emitterActive = options.emitterActive !== undefined ? options.emitterActive : state.emitterActive;
+
+    if (!emitterActive) {
+        ctx.fillStyle = '#020403';
+        ctx.fillRect(0, 0, w, h);
+        return;
+    }
+
+    // Determine laser color from wavelength or detector status
+    const rgb = detectorActive ? { r: 255, g: 45, b: 135 } : wavelengthToRGB(wl);
+
+    // 256-level optical laser bloom LUT (gamma expansion + laser core blooming)
+    const lut = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+        const I = i / 255.0;
+        if (I <= 0.003) {
+            lut[i] = 0xff000000; // Deep optical dark background
+            continue;
+        }
+
+        const lum = Math.pow(I, 0.85); // High dynamic range curve
+        let r = rgb.r * lum;
+        let g = rgb.g * lum;
+        let b = rgb.b * lum;
+
+        // Laser core bloom (slight whitening / high luminosity core at maximum intensity)
+        if (lum > 0.60) {
+            const core = Math.pow((lum - 0.60) / 0.40, 1.6);
+            r = r + (255 - r) * core * 0.60;
+            g = g + (255 - g) * core * 0.60;
+            b = b + (255 - b) * core * 0.60;
+        }
+
+        const R = Math.min(255, Math.max(0, Math.round(r)));
+        const G = Math.min(255, Math.max(0, Math.round(g)));
+        const B = Math.min(255, Math.max(0, Math.round(b)));
+        lut[i] = (255 << 24) | (B << 16) | (G << 8) | R;
+    }
+
+    // 1. Horizontal cross-section: I(z) = cos^2(pi * d * z / lambda D) * sinc^2(pi * a * z / lambda D)
+    const Ix = new Float32Array(w);
+    const lambda = (wl * 1e-9) * 8e5;
+    const d = dMm;
+    const a = aMm;
+    const D = DM;
+
+    if (!detectorActive) {
+        for (let x = 0; x < w; x++) {
+            const testZ = ((x / w) * 2 - 1) * 1.4;
+            const phase = (Math.PI * d * testZ) / (lambda * D);
+            const sincArg = (Math.PI * a * testZ) / (lambda * D);
+            const sinc = sincArg === 0 ? 1 : Math.sin(sincArg) / sincArg;
+            Ix[x] = Math.cos(phase) * Math.cos(phase) * (sinc * sinc);
+        }
+    } else {
+        // Decoherence / Observer ON: Classical Double Gaussian Clumps
+        const center = d * 1.5;
+        const sigma = 0.22;
+        for (let x = 0; x < w; x++) {
+            const testZ = ((x / w) * 2 - 1) * 1.4;
+            const g1 = Math.exp(-Math.pow(testZ + center, 2) / (2 * sigma * sigma));
+            const g2 = Math.exp(-Math.pow(testZ - center, 2) / (2 * sigma * sigma));
+            Ix[x] = (g1 + g2) * 0.5;
+        }
+    }
+
+    // 2. Vertical profile: Gaussian beam waist + soft aperture fade
+    const Iy = new Float32Array(h);
+    for (let y = 0; y < h; y++) {
+        const v = (y - h / 2) / (h / 2); // [-1, 1]
+        Iy[y] = Math.exp(-(v * v) / (2 * 0.38 * 0.38)) * Math.max(0, 1 - Math.pow(v, 6));
+    }
+
+    // 3. Fast separable buffer synthesis
+    const imgData = ctx.createImageData(w, h);
+    const buf32 = new Uint32Array(imgData.data.buffer);
+    for (let y = 0; y < h; y++) {
+        const vy = Iy[y];
+        const row = y * w;
+        for (let x = 0; x < w; x++) {
+            const idx = Math.min(255, Math.max(0, Math.floor(Ix[x] * vy * 255)));
+            buf32[row + x] = lut[idx];
+        }
+    }
+    ctx.putImageData(imgData, 0, 0);
+}
+
+// =============================================================================
 // PHOSPHOR DETECTION SCREEN (DYNAMIC CANVAS TEXTURE)
 // =============================================================================
 const screenCanvas = document.createElement('canvas');
@@ -316,11 +435,17 @@ screenCanvas.width = 512;
 screenCanvas.height = 512;
 const screenCtx = screenCanvas.getContext('2d');
 
-function initScreenTexture() {
-    screenCtx.fillStyle = '#060d0a';
-    screenCtx.fillRect(0, 0, 512, 512);
+function updateScreenTexture() {
+    renderOpticalFringePattern(screenCanvas, screenCtx, {
+        wavelength: state.wavelength,
+        slitSeparation: state.slitSeparation,
+        slitWidth: state.slitWidth,
+        screenDistance: state.screenDistance,
+        detectorActive: state.detectorActive,
+        emitterActive: state.emitterActive
+    });
 
-    // Subtle grid lines on phosphor screen
+    // Phosphor screen rectangular grid pattern
     screenCtx.strokeStyle = 'rgba(0, 255, 136, 0.12)';
     screenCtx.lineWidth = 1;
     for (let x = 0; x < 512; x += 32) {
@@ -336,25 +461,35 @@ function initScreenTexture() {
         screenCtx.stroke();
     }
 
-    // Phosphor screen border guide
-    screenCtx.strokeStyle = 'rgba(0, 255, 170, 0.4)';
+    // Phosphor screen rectangular border guide with matching green
+    screenCtx.strokeStyle = state.detectorActive ? 'rgba(255, 45, 135, 0.45)' : 'rgba(0, 255, 170, 0.5)';
     screenCtx.lineWidth = 4;
     screenCtx.strokeRect(6, 6, 500, 500);
+
+    if (screenTexture) screenTexture.needsUpdate = true;
 }
-initScreenTexture();
+
+function initScreenTexture() {
+    updateScreenTexture();
+}
 
 const screenTexture = new THREE.CanvasTexture(screenCanvas);
 screenTexture.generateMipmaps = true;
 screenTexture.minFilter = THREE.LinearMipmapLinearFilter;
 
+initScreenTexture();
+
 // Screen Panel Material
 const screenMaterial = new THREE.MeshStandardMaterial({
     map: screenTexture,
-    emissive: 0x003322,
+    emissive: 0x003318,
     emissiveMap: screenTexture,
     emissiveIntensity: 0.95,
     roughness: 0.35,
-    metalness: 0.1
+    metalness: 0.1,
+    polygonOffset: true,
+    polygonOffsetFactor: -1.5,
+    polygonOffsetUnits: -1.5
 });
 
 // Particle Screen Hit Drawer
@@ -364,12 +499,13 @@ function recordScreenHit(normZ, normY) {
     const py = Math.floor(((1 - normY) / 2) * 512);
 
     if (px >= 0 && px < 512 && py >= 0 && py < 512) {
-        const rad = 2.8;
+        const rad = 3.2;
         const grad = screenCtx.createRadialGradient(px, py, 0, px, py, rad);
-        const color = state.detectorActive ? 'rgba(255, 45, 135,' : 'rgba(0, 255, 170,';
+        const rgb = state.detectorActive ? { r: 255, g: 45, b: 135 } : wavelengthToRGB(state.wavelength);
+        const color = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b},`;
 
-        grad.addColorStop(0, color + ' 0.95)');
-        grad.addColorStop(0.5, color + ' 0.45)');
+        grad.addColorStop(0, color + ' 1.0)');
+        grad.addColorStop(0.4, color + ' 0.6)');
         grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
         screenCtx.fillStyle = grad;
@@ -392,12 +528,12 @@ function recordScreenHit(normZ, normY) {
 }
 
 function clearScreenHits() {
-    initScreenTexture();
-    screenTexture.needsUpdate = true;
+    updateScreenTexture();
     state.hitHistogram.fill(0);
     state.maxHistCount = 1;
     state.totalHits = 0;
     updateHUDStats();
+    updateIntensityGraph();
 }
 
 // =============================================================================
@@ -444,6 +580,57 @@ loader.load(
     function (gltf) {
         modelRoot = gltf.scene;
         scene.add(modelRoot);
+
+        // Screen spatial coordinates: cleanly separated apart from the optical bench and detector
+        const SCREEN_X = 6.60;
+        const dx = SCREEN_X - 5.30; // 1.30m separation offset
+
+        // High-Tech Laboratory Floor Pedestal for the Separated Screen Station
+        const screenPedestalGroup = new THREE.Group();
+        screenPedestalGroup.position.set(SCREEN_X, 0, 0);
+
+        const pedestalMat = new THREE.MeshStandardMaterial({
+            color: 0x182030,
+            metalness: 0.75,
+            roughness: 0.35
+        });
+
+        // Ground Base Plate
+        const basePlate = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.12, 1.9), pedestalMat);
+        basePlate.position.set(0, 0.06, 0);
+        basePlate.receiveShadow = true;
+        basePlate.castShadow = true;
+        screenPedestalGroup.add(basePlate);
+
+        // Dual Heavy Vertical Support Columns
+        const pillarMat = new THREE.MeshStandardMaterial({
+            color: 0x223046,
+            metalness: 0.8,
+            roughness: 0.25
+        });
+        const leftPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 1.15, 24), pillarMat);
+        leftPillar.position.set(0, 0.65, -0.5);
+        leftPillar.castShadow = true;
+        const rightPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 1.15, 24), pillarMat);
+        rightPillar.position.set(0, 0.65, 0.5);
+        rightPillar.castShadow = true;
+        screenPedestalGroup.add(leftPillar);
+        screenPedestalGroup.add(rightPillar);
+
+        // Floor Glowing Alignment Ring
+        const floorRing = new THREE.Mesh(
+            new THREE.RingGeometry(0.88, 0.96, 36).rotateX(-Math.PI / 2),
+            new THREE.MeshBasicMaterial({
+                color: 0x00ff88,
+                transparent: true,
+                opacity: 0.55,
+                side: THREE.DoubleSide
+            })
+        );
+        floorRing.position.set(0, 0.005, 0);
+        screenPedestalGroup.add(floorRing);
+
+        scene.add(screenPedestalGroup);
 
         modelRoot.traverse((child) => {
             if (child.isMesh) {
@@ -495,6 +682,17 @@ loader.load(
                     // Apply dynamic phosphor canvas
                     child.material = screenMaterial;
                     child.castShadow = false;
+                    // Position screen panel apart from the detector and optical bench
+                    child.position.x = SCREEN_X - 0.005;
+                } else if (child.name === 'Screen_Stand') {
+                    // Position the heavy stand apart alongside the screen panel
+                    child.position.x = SCREEN_X;
+                } else if (child.name.startsWith('Screen_Frame_')) {
+                    // Move all outer framing edges flush around the newly positioned screen
+                    child.position.x = 5.16 + dx;
+                } else if (child.name === 'Screen_Label') {
+                    // Move overhead screen identification label
+                    child.position.x = 4.95 + dx;
                 } else if (child.name === 'Detector_Status') {
                     buttonNodes.detectorStatus = child;
                     child.material = new THREE.MeshStandardMaterial({
@@ -505,27 +703,35 @@ loader.load(
                 } else if (child.name === 'QuantumBeam_Main') {
                     buttonNodes.beam = child;
                     child.material = new THREE.MeshBasicMaterial({
-                        color: 0x00f0ff,
+                        color: 0x00ff88,
                         transparent: true,
-                        opacity: 0.45,
+                        opacity: 0.5,
                         blending: THREE.AdditiveBlending
                     });
+                    // Position and scale beam cylinder so it starts at emitter and terminates cleanly at the separated screen
+                    child.position.x = 1.68;
+                    child.scale.set(1, 1.136, 1);
                 } else if (child.name.startsWith('SlitGlow_')) {
                     buttonNodes.slitGlows.push(child);
                     child.material = new THREE.MeshBasicMaterial({
-                        color: 0x00f0ff,
+                        color: 0x00ff88,
                         transparent: true,
                         opacity: 0.8,
                         blending: THREE.AdditiveBlending
                     });
                 } else if (child.name.startsWith('InterferenceBand_')) {
+                    // Rectangular pattern bands cleanly positioned in front of screen panel with zero clipping
                     buttonNodes.bands.push(child);
                     child.material = new THREE.MeshBasicMaterial({
-                        color: 0x00f0ff,
+                        color: 0x00ff88,
                         transparent: true,
-                        opacity: 0.6,
-                        blending: THREE.AdditiveBlending
+                        opacity: 0.75,
+                        blending: THREE.AdditiveBlending,
+                        depthWrite: false
                     });
+                    child.position.x = 5.15 + dx - 0.005;
+                    child.renderOrder = 3;
+                    child.visible = true;
                 } else if (child.name.startsWith('Electron_') || child.name.startsWith('WavePath_')) {
                     // Hide static blender preview placeholder meshes in favor of our dynamic particle system
                     child.visible = false;
@@ -559,7 +765,7 @@ const particlesPool = [];
 // Particle Geometry & Materials
 const particleGeo = new THREE.SphereGeometry(0.024, 8, 8);
 const waveMat = new THREE.MeshBasicMaterial({
-    color: 0x00f0ff,
+    color: 0x00ff88,
     transparent: true,
     opacity: 0.9,
     blending: THREE.AdditiveBlending
@@ -597,7 +803,7 @@ for (let i = 0; i < MAX_ACTIVE_PARTICLES; i++) {
 function sampleQuantumImpact(detectorActive, wavelength, slitDist) {
     const d = slitDist; // slit separation
     const lambda = (wavelength * 1e-9) * 8e5; // scale wavelength for visual screen mapping
-    const D = 5.3; // distance to screen
+    const D = 6.6; // distance to screen
     const a = 0.06; // slit width
 
     let normZ = 0;
@@ -691,7 +897,7 @@ function updateParticles(delta) {
         let posX, posY, posZ;
         const xEmitter = -3.1;
         const xSlits = 0.0;
-        const xScreen = 5.25;
+        const xScreen = 6.475;
 
         if (p.progress < 0.35) {
             // Stage 1: Heading toward slits
@@ -745,12 +951,17 @@ function updateVisualState() {
         glow.material.color.set(state.detectorActive ? 0xff2d87 : colorHex);
     });
 
-    // Interference Bands on 3D Screen Frame
+    // Rectangular Interference Bands on 3D Screen Frame
     buttonNodes.bands.forEach(band => {
-        // When detector is active, interference fringes disappear!
         band.visible = !state.detectorActive && state.emitterActive;
         band.material.color.set(colorHex);
     });
+
+    if (screenMaterial) {
+        screenMaterial.emissive.set(state.detectorActive ? 0x2b0515 : (state.emitterActive ? 0x003318 : 0x000000));
+        screenMaterial.emissiveIntensity = state.emitterActive ? 0.95 : 0.05;
+    }
+    updateScreenTexture();
 
     // Dynamic Lights
     emitterLight.intensity = state.emitterActive ? 2.8 : 0;
@@ -823,52 +1034,40 @@ function updateHUDStats() {
     if (hitEl) hitEl.textContent = state.totalHits.toLocaleString();
 }
 
-// Wavelength to RGB Hex
-function wavelengthToHex(wl) {
-    let r, g, b;
-    if (wl >= 380 && wl < 440) {
-        r = -(wl - 440) / (440 - 380);
-        g = 0.0;
-        b = 1.0;
-    } else if (wl >= 440 && wl < 490) {
-        r = 0.0;
-        g = (wl - 440) / (490 - 440);
-        b = 1.0;
-    } else if (wl >= 490 && wl < 510) {
-        r = 0.0;
-        g = 1.0;
-        b = -(wl - 510) / (510 - 490);
-    } else if (wl >= 510 && wl < 580) {
-        r = (wl - 510) / (580 - 510);
-        g = 1.0;
-        b = 0.0;
-    } else if (wl >= 580 && wl < 645) {
-        r = 1.0;
-        g = -(wl - 645) / (645 - 580);
-        b = 0.0;
-    } else if (wl >= 645 && wl <= 750) {
-        r = 1.0;
-        g = 0.0;
-        b = 0.0;
-    } else {
-        r = 0.0;
-        g = 0.9;
-        b = 1.0;
-    }
-    const hexR = Math.round(r * 255).toString(16).padStart(2, '0');
-    const hexG = Math.round(g * 255).toString(16).padStart(2, '0');
-    const hexB = Math.round(b * 255).toString(16).padStart(2, '0');
-    return parseInt(`0x${hexR}${hexG}${hexB}`, 16);
-}
-
 // =============================================================================
-// 2D REAL-TIME INTENSITY GRAPH PLOTTER
+// 2D REAL-TIME INTENSITY GRAPH & OPTICAL PATTERN PLOTTER
 // =============================================================================
 const graphCanvas = document.getElementById('intensity-canvas');
 const graphCtx = graphCanvas ? graphCanvas.getContext('2d') : null;
+const fringeScreenCanvas = document.getElementById('fringe-screen-canvas');
+const fringeScreenCtx = fringeScreenCanvas ? fringeScreenCanvas.getContext('2d') : null;
 
 function updateIntensityGraph() {
-    if (!graphCtx) return;
+    // 1. Draw Optical Interference Pattern Strip (Laser Screen Projection)
+    if (fringeScreenCanvas && fringeScreenCtx) {
+        renderOpticalFringePattern(fringeScreenCanvas, fringeScreenCtx, {
+            wavelength: state.wavelength,
+            slitSeparation: state.slitSeparation,
+            slitWidth: state.slitWidth,
+            screenDistance: state.screenDistance,
+            detectorActive: state.detectorActive,
+            emitterActive: state.emitterActive
+        });
+
+        // Update color indicator dot and wavelength label
+        const dot = document.getElementById('fringe-color-dot');
+        const label = document.getElementById('fringe-wavelength-label');
+        const rgb = state.detectorActive ? { r: 255, g: 45, b: 135 } : wavelengthToRGB(state.wavelength);
+        if (dot) {
+            dot.style.backgroundColor = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+            dot.style.boxShadow = `0 0 10px rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+        }
+        if (label) {
+            label.textContent = state.detectorActive ? 'OBSERVED (Particle)' : `${state.wavelength} nm`;
+        }
+    }
+
+    if (!graphCtx || !graphCanvas) return;
     const w = graphCanvas.width;
     const h = graphCanvas.height;
 
@@ -890,7 +1089,8 @@ function updateIntensityGraph() {
     const barW = w / binCount;
     const maxVal = Math.max(state.maxHistCount, 10);
 
-    graphCtx.fillStyle = state.detectorActive ? 'rgba(255, 45, 135, 0.65)' : 'rgba(0, 240, 255, 0.65)';
+    const rgb = state.detectorActive ? { r: 255, g: 45, b: 135 } : wavelengthToRGB(state.wavelength);
+    graphCtx.fillStyle = state.detectorActive ? 'rgba(255, 45, 135, 0.65)' : `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.65)`;
     for (let i = 0; i < binCount; i++) {
         const count = state.hitHistogram[i];
         if (count > 0) {
@@ -901,12 +1101,12 @@ function updateIntensityGraph() {
 
     // 2. Draw Theoretical Quantum Curve
     graphCtx.beginPath();
-    graphCtx.strokeStyle = state.detectorActive ? '#ffaa00' : '#00ff88';
+    graphCtx.strokeStyle = state.detectorActive ? '#ff2d87' : `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
     graphCtx.lineWidth = 2.5;
 
     const d = state.slitSeparation;
     const lambda = (state.wavelength * 1e-9) * 8e5;
-    const D = 5.3;
+    const D = 6.6;
     const a = 0.06;
 
     for (let x = 0; x < w; x++) {
@@ -941,9 +1141,9 @@ const teleportStations = {
     overview: {
         id: 'overview',
         name: 'Lab Overview',
-        vrPos: new THREE.Vector3(0, 0, 3.4),
-        camPos: new THREE.Vector3(0, 2.7, 5.4),
-        target: new THREE.Vector3(0, 2.0, 0)
+        vrPos: new THREE.Vector3(1.0, 0, 4.0),
+        camPos: new THREE.Vector3(1.0, 2.7, 5.8),
+        target: new THREE.Vector3(1.0, 2.1, 0)
     },
     console: {
         id: 'console',
@@ -969,23 +1169,23 @@ const teleportStations = {
     detector: {
         id: 'detector',
         name: 'Which-Way Detector',
-        vrPos: new THREE.Vector3(2.8, 0, 1.5),
-        camPos: new THREE.Vector3(2.6, 2.6, 1.6),
-        target: new THREE.Vector3(3.0, 2.2, 0)
+        vrPos: new THREE.Vector3(2.8, 0, 1.6),
+        camPos: new THREE.Vector3(2.3, 2.6, 1.9),
+        target: new THREE.Vector3(3.0, 2.1, 0)
     },
     screen: {
         id: 'screen',
         name: 'Phosphor Screen Target',
-        vrPos: new THREE.Vector3(4.8, 0, 1.5),
-        camPos: new THREE.Vector3(4.4, 2.9, 1.2),
-        target: new THREE.Vector3(5.3, 2.7, 0)
+        vrPos: new THREE.Vector3(5.4, 0, 2.2),
+        camPos: new THREE.Vector3(4.5, 2.7, 2.8),
+        target: new THREE.Vector3(6.5, 2.7, 0)
     },
     side: {
         id: 'side',
         name: 'Side Profile',
-        vrPos: new THREE.Vector3(0.5, 0, 4.4),
-        camPos: new THREE.Vector3(0.5, 2.5, 4.8),
-        target: new THREE.Vector3(0.5, 2.0, 0)
+        vrPos: new THREE.Vector3(1.0, 0, 4.8),
+        camPos: new THREE.Vector3(1.0, 2.5, 5.8),
+        target: new THREE.Vector3(1.0, 2.0, 0)
     }
 };
 
@@ -1780,23 +1980,86 @@ function updateTheoryCalculator() {
     theoryFringeCtx.fillStyle = '#03060e';
     theoryFringeCtx.fillRect(0, 0, w, h);
 
-    // Axes & grid lines
-    theoryFringeCtx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    const patternH = 80;
+    const rgb = wavelengthToRGB(lambdaNm);
+
+    // 1. Draw 2D Optical Laser Interference Pattern (Matching real laser double-slit screen)
+    const lut = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+        const I = i / 255.0;
+        if (I <= 0.003) {
+            lut[i] = 0xff000000;
+            continue;
+        }
+        const lum = Math.pow(I, 0.85);
+        let r = rgb.r * lum;
+        let g = rgb.g * lum;
+        let b = rgb.b * lum;
+        if (lum > 0.60) {
+            const core = Math.pow((lum - 0.60) / 0.40, 1.6);
+            r = r + (255 - r) * core * 0.60;
+            g = g + (255 - g) * core * 0.60;
+            b = b + (255 - b) * core * 0.60;
+        }
+        lut[i] = (255 << 24) | (Math.min(255, Math.round(b)) << 16) | (Math.min(255, Math.round(g)) << 8) | Math.min(255, Math.round(r));
+    }
+
+    const Ix = new Float32Array(w);
+    const spanMm = 6.0; // +/- 3mm span
+    for (let px = 0; px < w; px++) {
+        const yMm = ((px / w) * 2 - 1) * (spanMm / 2);
+        const yM = yMm * 1e-3;
+        const betaPhase = (Math.PI * (dMm * 1e-3) * yM) / (lambdaNm * 1e-9 * DM);
+        const alpha = (Math.PI * (aMm * 1e-3) * yM) / (lambdaNm * 1e-9 * DM);
+        const sinc = alpha === 0 ? 1 : Math.sin(alpha) / alpha;
+        Ix[px] = Math.cos(betaPhase) * Math.cos(betaPhase) * (sinc * sinc);
+    }
+
+    const Iy = new Float32Array(patternH);
+    for (let py = 0; py < patternH; py++) {
+        const v = (py - patternH / 2) / (patternH / 2);
+        Iy[py] = Math.exp(-(v * v) / (2 * 0.38 * 0.38)) * Math.max(0, 1 - Math.pow(v, 6));
+    }
+
+    const imgData = theoryFringeCtx.createImageData(w, patternH);
+    const buf32 = new Uint32Array(imgData.data.buffer);
+    for (let py = 0; py < patternH; py++) {
+        const vy = Iy[py];
+        const row = py * w;
+        for (let px = 0; px < w; px++) {
+            const idx = Math.min(255, Math.max(0, Math.floor(Ix[px] * vy * 255)));
+            buf32[row + px] = lut[idx];
+        }
+    }
+    theoryFringeCtx.putImageData(imgData, 0, 0);
+
+    // Divider line between 2D optical pattern and 1D cross-section curve
+    theoryFringeCtx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
     theoryFringeCtx.lineWidth = 1;
     theoryFringeCtx.beginPath();
-    theoryFringeCtx.moveTo(w / 2, 0);
+    theoryFringeCtx.moveTo(0, patternH + 2);
+    theoryFringeCtx.lineTo(w, patternH + 2);
+    theoryFringeCtx.stroke();
+
+    // Axes & grid lines for bottom graph
+    theoryFringeCtx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    theoryFringeCtx.beginPath();
+    theoryFringeCtx.moveTo(w / 2, patternH + 2);
     theoryFringeCtx.lineTo(w / 2, h);
-    theoryFringeCtx.moveTo(0, h - 25);
-    theoryFringeCtx.lineTo(w, h - 25);
+    theoryFringeCtx.moveTo(0, h - 22);
+    theoryFringeCtx.lineTo(w, h - 22);
     theoryFringeCtx.stroke();
 
     // Plot Envelope (diffraction sinc^2) in dashed amber
     theoryFringeCtx.beginPath();
-    theoryFringeCtx.strokeStyle = 'rgba(255, 183, 3, 0.5)';
+    theoryFringeCtx.strokeStyle = 'rgba(255, 183, 3, 0.55)';
     theoryFringeCtx.setLineDash([4, 4]);
     theoryFringeCtx.lineWidth = 1.5;
 
-    const spanMm = 6.0; // +/- 3mm span
+    const graphTop = patternH + 6;
+    const graphBottom = h - 22;
+    const graphHeight = graphBottom - graphTop;
+
     for (let px = 0; px < w; px++) {
         const yMm = ((px / w) * 2 - 1) * (spanMm / 2);
         const yM = yMm * 1e-3;
@@ -1804,30 +2067,22 @@ function updateTheoryCalculator() {
         const sinc = alpha === 0 ? 1 : Math.sin(alpha) / alpha;
         const env = sinc * sinc;
 
-        const plotY = (h - 26) - env * (h - 55);
+        const plotY = graphBottom - env * graphHeight;
         if (px === 0) theoryFringeCtx.moveTo(px, plotY);
         else theoryFringeCtx.lineTo(px, plotY);
     }
     theoryFringeCtx.stroke();
     theoryFringeCtx.setLineDash([]);
 
-    // Plot Full Theoretical Intensity Curve
+    // Plot Full Theoretical Intensity Curve with respective spectral color
     theoryFringeCtx.beginPath();
-    theoryFringeCtx.strokeStyle = '#00f0ff';
+    theoryFringeCtx.strokeStyle = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
     theoryFringeCtx.lineWidth = 2.2;
-    theoryFringeCtx.shadowColor = 'rgba(0, 240, 255, 0.6)';
+    theoryFringeCtx.shadowColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.6)`;
     theoryFringeCtx.shadowBlur = 8;
 
     for (let px = 0; px < w; px++) {
-        const yMm = ((px / w) * 2 - 1) * (spanMm / 2);
-        const yM = yMm * 1e-3;
-
-        const betaPhase = (Math.PI * (dMm * 1e-3) * yM) / (lambdaNm * 1e-9 * DM);
-        const alpha = (Math.PI * (aMm * 1e-3) * yM) / (lambdaNm * 1e-9 * DM);
-        const sinc = alpha === 0 ? 1 : Math.sin(alpha) / alpha;
-        const intensity = Math.cos(betaPhase) * Math.cos(betaPhase) * (sinc * sinc);
-
-        const plotY = (h - 26) - intensity * (h - 55);
+        const plotY = graphBottom - Ix[px] * graphHeight;
         if (px === 0) theoryFringeCtx.moveTo(px, plotY);
         else theoryFringeCtx.lineTo(px, plotY);
     }
@@ -1837,9 +2092,9 @@ function updateTheoryCalculator() {
     // Axis Labels
     theoryFringeCtx.fillStyle = '#64748b';
     theoryFringeCtx.font = '10px JetBrains Mono, monospace';
-    theoryFringeCtx.fillText('-3 mm', 8, h - 8);
-    theoryFringeCtx.fillText('Center (y=0)', w / 2 - 32, h - 8);
-    theoryFringeCtx.fillText('+3 mm', w - 44, h - 8);
+    theoryFringeCtx.fillText('-3 mm', 8, h - 7);
+    theoryFringeCtx.fillText('Center (y=0)', w / 2 - 32, h - 7);
+    theoryFringeCtx.fillText('+3 mm', w - 44, h - 7);
 }
 
 // 2D Wave vs Particle Simulator inside Theory (Chapter 2)
