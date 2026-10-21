@@ -1147,24 +1147,31 @@ const teleportStations = {
     },
     console: {
         id: 'console',
-        name: 'Console Desk',
+        name: 'Control Desk',
         vrPos: new THREE.Vector3(-1.5, 0, 3.2),
         camPos: new THREE.Vector3(-1.5, 2.3, 3.2),
         target: new THREE.Vector3(-1.5, 1.9, 0.5)
     },
-    slits: {
-        id: 'slits',
-        name: 'Double Slits Close-Up',
-        vrPos: new THREE.Vector3(0, 0, 1.4),
-        camPos: new THREE.Vector3(0.3, 2.7, 1.6),
-        target: new THREE.Vector3(0, 2.1, 0)
-    },
     emitter: {
         id: 'emitter',
-        name: 'Quantum Emitter Gun',
+        name: 'Quantum Emitter',
         vrPos: new THREE.Vector3(-3.2, 0, 1.5),
         camPos: new THREE.Vector3(-3.4, 2.5, 2.2),
         target: new THREE.Vector3(-3.8, 2.1, 0)
+    },
+    beamline: {
+        id: 'beamline',
+        name: 'Beamline POV',
+        vrPos: new THREE.Vector3(-4.8, 0, 1.2),
+        camPos: new THREE.Vector3(-5.4, 2.2, 0),
+        target: new THREE.Vector3(6.6, 2.1, 0)
+    },
+    slits: {
+        id: 'slits',
+        name: 'Double Slits',
+        vrPos: new THREE.Vector3(0, 0, 1.4),
+        camPos: new THREE.Vector3(0.3, 2.7, 1.6),
+        target: new THREE.Vector3(0, 2.1, 0)
     },
     detector: {
         id: 'detector',
@@ -1175,17 +1182,45 @@ const teleportStations = {
     },
     screen: {
         id: 'screen',
-        name: 'Phosphor Screen Target',
+        name: 'Phosphor Screen',
         vrPos: new THREE.Vector3(5.4, 0, 2.2),
         camPos: new THREE.Vector3(4.5, 2.7, 2.8),
         target: new THREE.Vector3(6.5, 2.7, 0)
     },
-    side: {
-        id: 'side',
-        name: 'Side Profile',
-        vrPos: new THREE.Vector3(1.0, 0, 4.8),
-        camPos: new THREE.Vector3(1.0, 2.5, 5.8),
-        target: new THREE.Vector3(1.0, 2.0, 0)
+    screen_front: {
+        id: 'screen_front',
+        name: 'Target Frontal',
+        vrPos: new THREE.Vector3(5.0, 0, 1.2),
+        camPos: new THREE.Vector3(4.8, 2.7, 0),
+        target: new THREE.Vector3(6.6, 2.7, 0)
+    },
+    chalkboard: {
+        id: 'chalkboard',
+        name: 'Theory Blackboard',
+        vrPos: new THREE.Vector3(0, 0, -3.8),
+        camPos: new THREE.Vector3(0, 2.5, -2.6),
+        target: new THREE.Vector3(0, 3.6, -5.6)
+    },
+    rear: {
+        id: 'rear',
+        name: 'Rear Lab Angle',
+        vrPos: new THREE.Vector3(0.8, 0, -2.6),
+        camPos: new THREE.Vector3(0.8, 2.7, -3.8),
+        target: new THREE.Vector3(0.8, 2.0, 0.5)
+    },
+    storage: {
+        id: 'storage',
+        name: 'Equipment Corner',
+        vrPos: new THREE.Vector3(4.8, 0, 4.4),
+        camPos: new THREE.Vector3(5.2, 2.5, 4.8),
+        target: new THREE.Vector3(1.5, 2.0, 0.5)
+    },
+    aerial: {
+        id: 'aerial',
+        name: 'Balcony Overview',
+        vrPos: new THREE.Vector3(1.0, 0, 5.0),
+        camPos: new THREE.Vector3(2.2, 5.0, 6.2),
+        target: new THREE.Vector3(0.8, 1.8, 0)
     }
 };
 
@@ -1433,13 +1468,21 @@ function createVRInGameMenu() {
     addVRButton(0.16, 0.04, 0.24, 0.09, 'reset-screen', '🔄 Clear Screen', 0xffb703);
     addVRButton(0.42, 0.04, 0.22, 0.09, 'toggle-beam-mode', '🌊 Beam Mode', 0x00ff88);
 
-    // Station Teleport Row
-    addVRButton(-0.45, -0.10, 0.16, 0.08, 'teleport-overview', 'Teleport: Overview', 0x00f0ff);
-    addVRButton(-0.27, -0.10, 0.16, 0.08, 'teleport-console', 'Teleport: Console', 0x00f0ff);
-    addVRButton(-0.09, -0.10, 0.16, 0.08, 'teleport-slits', 'Teleport: Slits', 0x00f0ff);
-    addVRButton(0.09, -0.10, 0.16, 0.08, 'teleport-emitter', 'Teleport: Emitter', 0x00f0ff);
-    addVRButton(0.27, -0.10, 0.16, 0.08, 'teleport-detector', 'Teleport: Detector', 0x00f0ff);
-    addVRButton(0.45, -0.10, 0.16, 0.08, 'teleport-screen', 'Teleport: Screen', 0x00f0ff);
+    // Station Teleport Row 1 (Apparatus Line)
+    addVRButton(-0.475, -0.05, 0.17, 0.065, 'teleport-overview', 'Teleport: Overview', 0x00f0ff);
+    addVRButton(-0.285, -0.05, 0.17, 0.065, 'teleport-console', 'Teleport: Console', 0x00f0ff);
+    addVRButton(-0.095, -0.05, 0.17, 0.065, 'teleport-emitter', 'Teleport: Emitter', 0x00f0ff);
+    addVRButton(0.095, -0.05, 0.17, 0.065, 'teleport-beamline', 'Teleport: Beamline', 0x00f0ff);
+    addVRButton(0.285, -0.05, 0.17, 0.065, 'teleport-slits', 'Teleport: Slits', 0x00f0ff);
+    addVRButton(0.475, -0.05, 0.17, 0.065, 'teleport-detector', 'Teleport: Detector', 0x00f0ff);
+
+    // Station Teleport Row 2 (Target & Environment)
+    addVRButton(-0.475, -0.13, 0.17, 0.065, 'teleport-screen', 'Teleport: Screen', 0x00f0ff);
+    addVRButton(-0.285, -0.13, 0.17, 0.065, 'teleport-screen_front', 'Teleport: Target Front', 0x00f0ff);
+    addVRButton(-0.095, -0.13, 0.17, 0.065, 'teleport-chalkboard', 'Teleport: Chalkboard', 0x00f0ff);
+    addVRButton(0.095, -0.13, 0.17, 0.065, 'teleport-rear', 'Teleport: Rear Lab', 0x00f0ff);
+    addVRButton(0.285, -0.13, 0.17, 0.065, 'teleport-storage', 'Teleport: Storage', 0x00f0ff);
+    addVRButton(0.475, -0.13, 0.17, 0.065, 'teleport-aerial', 'Teleport: Balcony', 0x00f0ff);
 
     // Bottom Row: Eye Level & Teleport Shortcuts
     addVRButton(-0.35, -0.22, 0.24, 0.075, 'vr-height-up', '▲ Raise Eye Level', 0x00f0ff);
@@ -1507,35 +1550,48 @@ function updateVRMenuTexture() {
     const modeLabel = state.beamMode === 'stream' ? '🌊 MODE: STREAM' : '🎯 MODE: SINGLE';
     drawVRCanvasButton(775, 175, 224, 65, modeLabel, '#00ff88', 'rgba(0, 255, 136, 0.2)');
 
-    // SECTION 3: TELEPORTATION PRESETS (Row 3)
-    vrMenuCtx.font = 'bold 14px Outfit, sans-serif';
+    // SECTION 3: TELEPORTATION PRESETS (Row 3 & 4)
+    vrMenuCtx.font = 'bold 13px Outfit, sans-serif';
     vrMenuCtx.fillStyle = '#94a3b8';
     vrMenuCtx.textAlign = 'left';
-    vrMenuCtx.fillText('TELEPORT STATIONS:', 25, 272);
+    vrMenuCtx.fillText('TELEPORT STATIONS — APPARATUS & FACILITY:', 25, 256);
 
-    const stationsList = [
-        { name: 'Overview', x: 25, w: 145 },
-        { name: 'Console', x: 185, w: 145 },
-        { name: 'Slits', x: 345, w: 145 },
-        { name: 'Emitter', x: 505, w: 145 },
-        { name: 'Detector', x: 665, w: 145 },
-        { name: 'Screen', x: 825, w: 174 }
+    const stationsListRow1 = [
+        { name: 'Overview', x: 25, w: 146 },
+        { name: 'Console', x: 187, w: 146 },
+        { name: 'Emitter', x: 349, w: 146 },
+        { name: 'Beamline', x: 511, w: 146 },
+        { name: 'Slits', x: 673, w: 146 },
+        { name: 'Detector', x: 835, w: 164 }
     ];
 
-    stationsList.forEach(st => {
-        drawVRCanvasButton(st.x, 285, st.w, 60, st.name, '#00f0ff', 'rgba(0, 240, 255, 0.15)', 16);
+    stationsListRow1.forEach(st => {
+        drawVRCanvasButton(st.x, 268, st.w, 46, st.name, '#00f0ff', 'rgba(0, 240, 255, 0.15)', 14);
     });
 
-    // SECTION 4: VIEW HEIGHT & SHORTCUTS (Row 4)
-    vrMenuCtx.font = 'bold 14px Outfit, sans-serif';
+    const stationsListRow2 = [
+        { name: 'Screen', x: 25, w: 146 },
+        { name: 'Target Front', x: 187, w: 146 },
+        { name: 'Chalkboard', x: 349, w: 146 },
+        { name: 'Rear Lab', x: 511, w: 146 },
+        { name: 'Storage', x: 673, w: 146 },
+        { name: 'Balcony', x: 835, w: 164 }
+    ];
+
+    stationsListRow2.forEach(st => {
+        drawVRCanvasButton(st.x, 322, st.w, 46, st.name, '#00f0ff', 'rgba(0, 240, 255, 0.15)', 14);
+    });
+
+    // SECTION 4: VIEW HEIGHT & SHORTCUTS
+    vrMenuCtx.font = 'bold 13px Outfit, sans-serif';
     vrMenuCtx.fillStyle = '#94a3b8';
     vrMenuCtx.textAlign = 'left';
-    vrMenuCtx.fillText(`EYE LEVEL HEIGHT (+${state.userHeightOffset.toFixed(2)}m):`, 25, 385);
+    vrMenuCtx.fillText(`EYE LEVEL HEIGHT (+${state.userHeightOffset.toFixed(2)}m):`, 25, 394);
 
-    drawVRCanvasButton(25, 400, 220, 60, '▲ RAISE (+0.15m)', '#00f0ff', 'rgba(0, 240, 255, 0.15)', 16);
-    drawVRCanvasButton(265, 400, 220, 60, '▼ LOWER (-0.15m)', '#00f0ff', 'rgba(0, 240, 255, 0.15)', 16);
-    drawVRCanvasButton(505, 400, 220, 60, '⟲ RESET HEIGHT', '#94a3b8', 'rgba(148, 163, 184, 0.15)', 16);
-    drawVRCanvasButton(745, 400, 254, 60, '🔭 LAB OVERVIEW', '#00f0ff', 'rgba(0, 240, 255, 0.25)', 16);
+    drawVRCanvasButton(25, 408, 220, 52, '▲ RAISE (+0.15m)', '#00f0ff', 'rgba(0, 240, 255, 0.15)', 15);
+    drawVRCanvasButton(265, 408, 220, 52, '▼ LOWER (-0.15m)', '#00f0ff', 'rgba(0, 240, 255, 0.15)', 15);
+    drawVRCanvasButton(505, 408, 220, 52, '⟲ RESET HEIGHT', '#94a3b8', 'rgba(148, 163, 184, 0.15)', 15);
+    drawVRCanvasButton(745, 408, 254, 52, '🔭 LAB OVERVIEW', '#00f0ff', 'rgba(0, 240, 255, 0.25)', 15);
 
     // Bottom Telemetry Footer
     vrMenuCtx.fillStyle = 'rgba(255, 255, 255, 0.05)';
