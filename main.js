@@ -3,6 +3,24 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+
+// =============================================================================
+// LABORATORY HUMAN SCALE & OPTICAL AXIS ALIGNMENT CONSTANTS
+// =============================================================================
+// Calibrate the lab room and apparatus to true human ergonomic scale (~0.70x)
+// Physical standing eye height in WebXR Quest is ~1.55m - 1.65m.
+// With LAB_SCALE = 0.70:
+// - Optical Axis (Laser, Slits, Detector, Screen) = 2.10 * 0.70 = 1.47m (perfect chest/eye line of sight)
+// - Bench Workbench Height = 1.00 * 0.70 = 0.70m (standard laboratory table height)
+// - Console Buttons Height = 1.78 * 0.70 = 1.25m (natural arm-reach height for hands/controllers)
+const LAB_SCALE = 0.70;
+const OPTICAL_AXIS_Y = 2.10;
+const Y_SHIFT_SLITS = OPTICAL_AXIS_Y - 2.70; // -0.60m vertical offset to align slits with optical axis
+const Y_SHIFT_SCREEN = OPTICAL_AXIS_Y - 2.70; // -0.60m vertical offset to align screen with optical axis
+const SCREEN_X = 6.40;
+const SCREEN_FACE_X = SCREEN_X - 0.12; // Front phosphor surface facing beam
+const dx = SCREEN_X - 5.30; // separation offset from original GLB position
 
 // =============================================================================
 // QUANTUM SIMULATION STATE
@@ -16,7 +34,7 @@ const state = {
     wavelength: 500,    // nm
     slitSeparation: 0.28, // mm (physical model distance roughly 0.28m mapped)
     slitWidth: 0.06,
-    screenDistance: 6.6,
+    screenDistance: 6.4,
     totalHits: 0,
     audioEnabled: false,
     audioMuted: false,
@@ -97,6 +115,59 @@ class QuantumAudioEngine {
 
         osc.start(now);
         osc.stop(now + 0.08);
+    }
+
+    playPageFlipSound() {
+        if (!this.initialized || state.audioMuted || !this.ctx) return;
+        try {
+            const now = this.ctx.currentTime;
+            const sampleRate = this.ctx.sampleRate;
+            const bufferSize = Math.floor(sampleRate * 0.22);
+            const noiseBuffer = this.ctx.createBuffer(1, bufferSize, sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = (Math.random() * 2 - 1) * Math.exp(-i / (sampleRate * 0.08));
+            }
+            const whiteNoise = this.ctx.createBufferSource();
+            whiteNoise.buffer = noiseBuffer;
+
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.setValueAtTime(1800, now);
+            filter.frequency.exponentialRampToValueAtTime(500, now + 0.2);
+            filter.Q.setValueAtTime(2.2, now);
+
+            const gain = this.ctx.createGain();
+            gain.gain.setValueAtTime(0.001, now);
+            gain.gain.linearRampToValueAtTime(0.32, now + 0.03);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+
+            whiteNoise.connect(filter);
+            filter.connect(gain);
+            gain.connect(this.masterGain);
+
+            whiteNoise.start(now);
+            whiteNoise.stop(now + 0.2);
+
+            // Subtle paper settling thud
+            const thudOsc = this.ctx.createOscillator();
+            const thudGain = this.ctx.createGain();
+            thudOsc.type = 'sine';
+            thudOsc.frequency.setValueAtTime(170, now + 0.1);
+            thudOsc.frequency.exponentialRampToValueAtTime(45, now + 0.24);
+
+            thudGain.gain.setValueAtTime(0.001, now);
+            thudGain.gain.setValueAtTime(0.18, now + 0.1);
+            thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+
+            thudOsc.connect(thudGain);
+            thudGain.connect(this.masterGain);
+
+            thudOsc.start(now + 0.1);
+            thudOsc.stop(now + 0.24);
+        } catch (e) {
+            console.warn('Page flip audio error:', e);
+        }
     }
 
     playParticleHit() {
@@ -196,7 +267,7 @@ scene.background = new THREE.Color(0x0a0f1d);
 scene.fog = new THREE.FogExp2(0x0a0f1d, 0.018);
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.05, 100);
-camera.position.set(1.0, 2.7, 5.8);
+camera.position.set(0.7, 1.75, 3.65);
 
 const xrRig = new THREE.Group();
 xrRig.position.set(0, 0, 0); // Keep at world origin in non-VR so controls.target and camera.position operate 1:1 in true world coordinates
@@ -219,9 +290,9 @@ pmremGenerator.compileEquirectangularShader();
 const roomEnvironment = new RoomEnvironment();
 scene.environment = pmremGenerator.fromScene(roomEnvironment, 0.04).texture;
 
-// Reset XR Rig when entering VR session
+// Reset XR Rig when entering VR session - calibrated to human laboratory scale
 renderer.xr.addEventListener('sessionstart', () => {
-    xrRig.position.set(1.0, state.userHeightOffset, 4.0);
+    xrRig.position.set(1.0 * LAB_SCALE, state.userHeightOffset, 3.5 * LAB_SCALE);
     xrRig.rotation.set(0, 0, 0);
     if (vrMenuRoot) {
         updateVRMenuTexture();
@@ -230,21 +301,24 @@ renderer.xr.addEventListener('sessionstart', () => {
 
 renderer.xr.addEventListener('sessionend', () => {
     xrRig.position.set(0, 0, 0);
+    xrRig.rotation.set(0, 0, 0);
     setAppView(state.currentAppView);
 });
 
-// VR Button
-const vrBtn = VRButton.createButton(renderer);
+// VR Button with Hand Tracking Feature enabled
+const vrBtn = VRButton.createButton(renderer, {
+    optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
+});
 document.body.appendChild(vrBtn);
 
-// Orbit Controls
+// Orbit Controls calibrated to human scale optical axis
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(1.0, 2.1, 0);
+controls.target.set(0.7, OPTICAL_AXIS_Y * LAB_SCALE, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
 controls.maxPolarAngle = Math.PI / 2 - 0.02; // prevent going below floor
-controls.minDistance = 0.5;
-controls.maxDistance = 18;
+controls.minDistance = 0.35;
+controls.maxDistance = 14;
 controls.update();
 
 // =============================================================================
@@ -257,7 +331,7 @@ const hemisphereLight = new THREE.HemisphereLight(0x93c5fd, 0x1e293b, 1.35);
 scene.add(hemisphereLight);
 
 const mainSun = new THREE.DirectionalLight(0xffffff, 2.4);
-mainSun.position.set(4, 9, 5);
+mainSun.position.set(4 * LAB_SCALE, 9 * LAB_SCALE, 5 * LAB_SCALE);
 mainSun.castShadow = true;
 mainSun.shadow.mapSize.width = 2048;
 mainSun.shadow.mapSize.height = 2048;
@@ -272,40 +346,40 @@ scene.add(mainSun);
 
 // Soft Fill Light to eliminate harsh black regions
 const fillLight = new THREE.DirectionalLight(0x8bc4ff, 1.3);
-fillLight.position.set(-6, 7, 4);
+fillLight.position.set(-6 * LAB_SCALE, 7 * LAB_SCALE, 4 * LAB_SCALE);
 scene.add(fillLight);
 
-// Overhead Optical Bench Spotlight
-const benchSpot = new THREE.SpotLight(0xffffff, 3.2, 16, Math.PI / 3, 0.45, 1);
-benchSpot.position.set(0, 5.5, 1.2);
-benchSpot.target.position.set(0, 1.6, 0);
+// Overhead Optical Bench Spotlight focused directly on aligned optical axis
+const benchSpot = new THREE.SpotLight(0xffffff, 3.2, 16 * LAB_SCALE, Math.PI / 3, 0.45, 1);
+benchSpot.position.set(0, 5.2 * LAB_SCALE, 1.2 * LAB_SCALE);
+benchSpot.target.position.set(0, OPTICAL_AXIS_Y * LAB_SCALE, 0);
 scene.add(benchSpot);
 scene.add(benchSpot.target);
 
 // Console Desk Task Light
-const consoleSpot = new THREE.SpotLight(0x60a5fa, 2.0, 8, Math.PI / 4, 0.3);
-consoleSpot.position.set(-1.5, 4.0, 2.5);
-consoleSpot.target.position.set(-1.5, 1.4, 2.3);
+const consoleSpot = new THREE.SpotLight(0x60a5fa, 2.0, 8 * LAB_SCALE, Math.PI / 4, 0.3);
+consoleSpot.position.set(-1.5 * LAB_SCALE, 3.8 * LAB_SCALE, 2.5 * LAB_SCALE);
+consoleSpot.target.position.set(-1.5 * LAB_SCALE, 1.45 * LAB_SCALE, 2.3 * LAB_SCALE);
 scene.add(consoleSpot);
 scene.add(consoleSpot.target);
 
-// Dynamic Accent Lights
-const emitterLight = new THREE.PointLight(0x00f0ff, 2.8, 4.5);
-emitterLight.position.set(-3.1, 2.1, 0);
+// Dynamic Accent Lights focused on Emitter, Detector, and Screen Face
+const emitterLight = new THREE.PointLight(0x00f0ff, 2.8, 4.5 * LAB_SCALE);
+emitterLight.position.set(-3.12 * LAB_SCALE, OPTICAL_AXIS_Y * LAB_SCALE, 0);
 scene.add(emitterLight);
 
-const detectorLight = new THREE.PointLight(0xff2d87, 0, 4.0);
-detectorLight.position.set(3.0, 2.45, 0.5);
+const detectorLight = new THREE.PointLight(0xff2d87, 0, 4.0 * LAB_SCALE);
+detectorLight.position.set(3.0 * LAB_SCALE, OPTICAL_AXIS_Y * LAB_SCALE, 0.5 * LAB_SCALE);
 scene.add(detectorLight);
 
-const screenGlowLight = new THREE.PointLight(0x00ff88, 1.6, 4.5);
-screenGlowLight.position.set(6.38, 2.7, 0);
+const screenGlowLight = new THREE.PointLight(0x00ff88, 1.6, 4.5 * LAB_SCALE);
+screenGlowLight.position.set(SCREEN_FACE_X * LAB_SCALE, OPTICAL_AXIS_Y * LAB_SCALE, 0);
 scene.add(screenGlowLight);
 
 // Pendant Lamps
 [-4, 0, 4].forEach(x => {
-    const lampLight = new THREE.PointLight(0xffe8cc, 1.4, 8.0);
-    lampLight.position.set(x, 4.2, -1.5);
+    const lampLight = new THREE.PointLight(0xffe8cc, 1.4, 8.0 * LAB_SCALE);
+    lampLight.position.set(x * LAB_SCALE, 4.2 * LAB_SCALE, -1.5 * LAB_SCALE);
     scene.add(lampLight);
 });
 
@@ -561,6 +635,7 @@ const buttonAnimState = {
 // =============================================================================
 // LOAD GLB 3D MODEL WITH PBR MATERIAL ENHANCEMENT
 // =============================================================================
+const particleGroup = new THREE.Group();
 const loader = new GLTFLoader();
 function dismissLoadingScreen() {
     const loadingEl = document.getElementById('loading');
@@ -579,13 +654,13 @@ loader.load(
     './models/YDSE1.glb',
     function (gltf) {
         modelRoot = gltf.scene;
+        modelRoot.scale.set(LAB_SCALE, LAB_SCALE, LAB_SCALE);
         scene.add(modelRoot);
 
-        // Screen spatial coordinates: cleanly separated apart from the optical bench and detector
-        const SCREEN_X = 6.60;
-        const dx = SCREEN_X - 5.30; // 1.30m separation offset
+        // Add particle system directly to modelRoot so all particle positions share local lab coordinates
+        modelRoot.add(particleGroup);
 
-        // High-Tech Laboratory Floor Pedestal for the Separated Screen Station
+        // High-Tech Laboratory Floor Pedestal for the Screen Station
         const screenPedestalGroup = new THREE.Group();
         screenPedestalGroup.position.set(SCREEN_X, 0, 0);
 
@@ -602,17 +677,17 @@ loader.load(
         basePlate.castShadow = true;
         screenPedestalGroup.add(basePlate);
 
-        // Dual Heavy Vertical Support Columns
+        // Dual Heavy Vertical Support Columns (solid connection from base plate to screen stand base at y = 0.55m)
         const pillarMat = new THREE.MeshStandardMaterial({
             color: 0x223046,
             metalness: 0.8,
             roughness: 0.25
         });
-        const leftPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 1.15, 24), pillarMat);
-        leftPillar.position.set(0, 0.65, -0.5);
+        const leftPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.43, 24), pillarMat);
+        leftPillar.position.set(0, 0.335, -0.5);
         leftPillar.castShadow = true;
-        const rightPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 1.15, 24), pillarMat);
-        rightPillar.position.set(0, 0.65, 0.5);
+        const rightPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.43, 24), pillarMat);
+        rightPillar.position.set(0, 0.335, 0.5);
         rightPillar.castShadow = true;
         screenPedestalGroup.add(leftPillar);
         screenPedestalGroup.add(rightPillar);
@@ -630,12 +705,22 @@ loader.load(
         floorRing.position.set(0, 0.005, 0);
         screenPedestalGroup.add(floorRing);
 
-        scene.add(screenPedestalGroup);
+        modelRoot.add(screenPedestalGroup);
 
         modelRoot.traverse((child) => {
             if (child.isMesh) {
                 child.castShadow = true;
                 child.receiveShadow = true;
+
+                // 1. OPTICAL AXIS ALIGNMENT (Vertical Y-Shift)
+                // Bring Double Slits down (-0.60m) so slit apertures align with Emitter nozzle (y = 2.10m)
+                if (child.name === 'Slit_Base' || child.name.startsWith('Barrier_') || child.name.startsWith('Slit_Frame_') || child.name.startsWith('SlitGlow_') || child.name === 'Slit_Label') {
+                    child.position.y += Y_SHIFT_SLITS;
+                }
+                // Bring Phosphor Screen and frame down (-0.60m) so screen center aligns with beam impact (y = 2.10m)
+                else if (child.name === 'Screen_Panel' || child.name === 'Screen_Stand' || child.name.startsWith('Screen_Frame_') || child.name.startsWith('InterferenceBand_') || child.name === 'Screen_Label') {
+                    child.position.y += Y_SHIFT_SCREEN;
+                }
 
                 // Enhanced PBR Materials: Ensure rich lighting, reflection, and visible contrast
                 if (child.material) {
@@ -643,11 +728,9 @@ loader.load(
                     child.material.needsUpdate = true;
 
                     if (child.material.isMeshStandardMaterial) {
-                        // Prevent pitch-black surfaces on dark metallic parts
                         child.material.roughness = Math.max(0.28, Math.min(0.85, child.material.roughness));
                         child.material.metalness = Math.min(0.65, child.material.metalness);
 
-                        // Brighten very dark materials for clear laboratory visibility
                         if (child.material.color) {
                             const hsl = {};
                             child.material.color.getHSL(hsl);
@@ -658,7 +741,7 @@ loader.load(
                     }
                 }
 
-                // Interactive Buttons & Apparatus Nodes
+                // 2. INTERACTIVE BUTTONS & APPARATUS NODES
                 if (child.name === 'BTN_EMITTER') {
                     buttonNodes.emitter = child;
                     buttonAnimState.emitter.baseY = child.position.y;
@@ -679,19 +762,16 @@ loader.load(
                     child.userData = { action: 'toggle-emitter', label: 'Emitter Switch' };
                     interactiveObjects.push(child);
                 } else if (child.name === 'Screen_Panel') {
-                    // Apply dynamic phosphor canvas
+                    // Dynamic phosphor canvas texture
                     child.material = screenMaterial;
                     child.castShadow = false;
-                    // Position screen panel apart from the detector and optical bench
-                    child.position.x = SCREEN_X - 0.005;
+                    child.position.x = SCREEN_X;
                 } else if (child.name === 'Screen_Stand') {
-                    // Position the heavy stand apart alongside the screen panel
                     child.position.x = SCREEN_X;
                 } else if (child.name.startsWith('Screen_Frame_')) {
-                    // Move all outer framing edges flush around the newly positioned screen
+                    // Outer framing flush with screen panel front edge
                     child.position.x = 5.16 + dx;
                 } else if (child.name === 'Screen_Label') {
-                    // Move overhead screen identification label
                     child.position.x = 4.95 + dx;
                 } else if (child.name === 'Detector_Status') {
                     buttonNodes.detectorStatus = child;
@@ -708,9 +788,10 @@ loader.load(
                         opacity: 0.5,
                         blending: THREE.AdditiveBlending
                     });
-                    // Position and scale beam cylinder so it starts at emitter and terminates cleanly at the separated screen
-                    child.position.x = 1.68;
-                    child.scale.set(1, 1.136, 1);
+                    // Perfectly position & scale laser cylinder from Emitter aperture (-3.12m) to Phosphor Screen Face (SCREEN_FACE_X)
+                    const beamLength = SCREEN_FACE_X - (-3.12);
+                    child.position.set((-3.12 + SCREEN_FACE_X) / 2, OPTICAL_AXIS_Y, 0);
+                    child.scale.set(1, beamLength / 8.44, 1);
                 } else if (child.name.startsWith('SlitGlow_')) {
                     buttonNodes.slitGlows.push(child);
                     child.material = new THREE.MeshBasicMaterial({
@@ -720,7 +801,7 @@ loader.load(
                         blending: THREE.AdditiveBlending
                     });
                 } else if (child.name.startsWith('InterferenceBand_')) {
-                    // Rectangular pattern bands cleanly positioned in front of screen panel with zero clipping
+                    // Rectangular pattern bands positioned flush 2mm in front of screen canvas
                     buttonNodes.bands.push(child);
                     child.material = new THREE.MeshBasicMaterial({
                         color: 0x00ff88,
@@ -729,7 +810,7 @@ loader.load(
                         blending: THREE.AdditiveBlending,
                         depthWrite: false
                     });
-                    child.position.x = 5.15 + dx - 0.005;
+                    child.position.x = SCREEN_FACE_X - 0.002;
                     child.renderOrder = 3;
                     child.visible = true;
                 } else if (child.name.startsWith('Electron_') || child.name.startsWith('WavePath_')) {
@@ -777,9 +858,6 @@ const observedMat = new THREE.MeshBasicMaterial({
     blending: THREE.AdditiveBlending
 });
 
-const particleGroup = new THREE.Group();
-scene.add(particleGroup);
-
 for (let i = 0; i < MAX_ACTIVE_PARTICLES; i++) {
     const mesh = new THREE.Mesh(particleGeo, waveMat);
     mesh.visible = false;
@@ -793,7 +871,7 @@ for (let i = 0; i < MAX_ACTIVE_PARTICLES; i++) {
         chosenSlit: 0, // -1 or +1 (for observed mode)
         targetNormZ: 0,
         targetNormY: 0,
-        startY: 2.1,
+        startY: OPTICAL_AXIS_Y,
         startZ: 0,
         trail: []
     });
@@ -863,8 +941,8 @@ function spawnParticle() {
     p.mesh.material = state.detectorActive ? observedMat : waveMat;
     p.mesh.visible = true;
 
-    // Emitter Aperture Position: x = -3.1, y = 2.1, z = 0
-    p.mesh.position.set(-3.1, 2.1, 0);
+    // Emitter Aperture Position: x = -3.12, y = OPTICAL_AXIS_Y, z = 0
+    p.mesh.position.set(-3.12, OPTICAL_AXIS_Y, 0);
 }
 
 function updateParticles(delta) {
@@ -877,8 +955,8 @@ function updateParticles(delta) {
     }
 
     // Update active particles along 3-stage path:
-    // Stage 1: Emitter (x = -3.1) -> Slit Barrier (x = 0)
-    // Stage 2: Slit Barrier (x = 0) -> Screen Panel (x = 5.25)
+    // Stage 1: Emitter (x = -3.12) -> Slit Barrier (x = 0)
+    // Stage 2: Slit Barrier (x = 0) -> Screen Face (x = SCREEN_FACE_X)
     for (let i = 0; i < particlesPool.length; i++) {
         const p = particlesPool[i];
         if (!p.active) continue;
@@ -886,7 +964,7 @@ function updateParticles(delta) {
         p.progress += p.speed * (delta * 60);
 
         if (p.progress >= 1.0) {
-            // Impact Screen!
+            // Impact Screen precisely on the canvas face
             recordScreenHit(p.targetNormZ, p.targetNormY);
             p.active = false;
             p.mesh.visible = false;
@@ -895,23 +973,23 @@ function updateParticles(delta) {
         }
 
         let posX, posY, posZ;
-        const xEmitter = -3.1;
+        const xEmitter = -3.12;
         const xSlits = 0.0;
-        const xScreen = 6.475;
+        const xScreen = SCREEN_FACE_X;
 
         if (p.progress < 0.35) {
-            // Stage 1: Heading toward slits
+            // Stage 1: Heading toward slits directly along optical axis
             const t = p.progress / 0.35;
             posX = THREE.MathUtils.lerp(xEmitter, xSlits, t);
-            posY = 2.1 + Math.sin(t * Math.PI) * 0.02;
+            posY = OPTICAL_AXIS_Y + Math.sin(t * Math.PI) * 0.02;
             posZ = (Math.random() - 0.5) * 0.04;
         } else {
-            // Stage 2: Passing through slits and traveling to screen
+            // Stage 2: Passing through slits and traveling to screen face
             const t = (p.progress - 0.35) / 0.65;
             posX = THREE.MathUtils.lerp(xSlits, xScreen, t);
 
-            const targetWorldZ = p.targetNormZ * 1.5;
-            const targetWorldY = 2.7 + p.targetNormY * 1.1;
+            const targetWorldZ = p.targetNormZ * 1.35;
+            const targetWorldY = OPTICAL_AXIS_Y + p.targetNormY * 1.0;
 
             if (!state.detectorActive) {
                 // Wave mode: quantum sinusoidal probability oscillation
@@ -926,7 +1004,7 @@ function updateParticles(delta) {
                     posZ = THREE.MathUtils.lerp(slitZ, targetWorldZ, (t - 0.2) / 0.8);
                 }
             }
-            posY = THREE.MathUtils.lerp(2.1, targetWorldY, t);
+            posY = THREE.MathUtils.lerp(OPTICAL_AXIS_Y, targetWorldY, t);
         }
 
         p.mesh.position.set(posX, posY, posZ);
@@ -1137,90 +1215,91 @@ function updateIntensityGraph() {
 // =============================================================================
 // OBSERVATION STATIONS & TELEPORTATION SYSTEM
 // =============================================================================
+const S = LAB_SCALE;
 const teleportStations = {
     overview: {
         id: 'overview',
         name: 'Lab Overview',
-        vrPos: new THREE.Vector3(1.0, 0, 4.0),
-        camPos: new THREE.Vector3(1.0, 2.7, 5.8),
-        target: new THREE.Vector3(1.0, 2.1, 0)
+        vrPos: new THREE.Vector3(0.7, 0, 2.8),
+        camPos: new THREE.Vector3(0.7, 1.75, 3.65),
+        target: new THREE.Vector3(0.7, OPTICAL_AXIS_Y * S, 0)
     },
     console: {
         id: 'console',
         name: 'Control Desk',
-        vrPos: new THREE.Vector3(-1.5, 0, 3.2),
-        camPos: new THREE.Vector3(-1.5, 2.3, 3.2),
-        target: new THREE.Vector3(-1.5, 1.9, 0.5)
+        vrPos: new THREE.Vector3(-1.05, 0, 2.1),
+        camPos: new THREE.Vector3(-1.05, 1.47, 2.1),
+        target: new THREE.Vector3(-1.05, 1.25, 1.61)
     },
     emitter: {
         id: 'emitter',
         name: 'Quantum Emitter',
-        vrPos: new THREE.Vector3(-3.2, 0, 1.5),
-        camPos: new THREE.Vector3(-3.4, 2.5, 2.2),
-        target: new THREE.Vector3(-3.8, 2.1, 0)
+        vrPos: new THREE.Vector3(-2.24, 0, 1.05),
+        camPos: new THREE.Vector3(-2.24, 1.6, 1.4),
+        target: new THREE.Vector3(-2.55, OPTICAL_AXIS_Y * S, 0)
     },
     beamline: {
         id: 'beamline',
         name: 'Beamline POV',
-        vrPos: new THREE.Vector3(-4.8, 0, 1.2),
-        camPos: new THREE.Vector3(-5.4, 2.2, 0),
-        target: new THREE.Vector3(6.6, 2.1, 0)
+        vrPos: new THREE.Vector3(-3.36, 0, 0.7),
+        camPos: new THREE.Vector3(-3.5, OPTICAL_AXIS_Y * S, 0),
+        target: new THREE.Vector3(SCREEN_X * S, OPTICAL_AXIS_Y * S, 0)
     },
     slits: {
         id: 'slits',
         name: 'Double Slits',
-        vrPos: new THREE.Vector3(0, 0, 1.4),
-        camPos: new THREE.Vector3(0.3, 2.7, 1.6),
-        target: new THREE.Vector3(0, 2.1, 0)
+        vrPos: new THREE.Vector3(0, 0, 0.95),
+        camPos: new THREE.Vector3(0.15, 1.6, 1.15),
+        target: new THREE.Vector3(0, OPTICAL_AXIS_Y * S, 0)
     },
     detector: {
         id: 'detector',
         name: 'Which-Way Detector',
-        vrPos: new THREE.Vector3(2.8, 0, 1.6),
-        camPos: new THREE.Vector3(2.3, 2.6, 1.9),
-        target: new THREE.Vector3(3.0, 2.1, 0)
+        vrPos: new THREE.Vector3(1.96, 0, 1.05),
+        camPos: new THREE.Vector3(1.65, 1.6, 1.25),
+        target: new THREE.Vector3(2.1, OPTICAL_AXIS_Y * S, 0)
     },
     screen: {
         id: 'screen',
         name: 'Phosphor Screen',
-        vrPos: new THREE.Vector3(5.4, 0, 2.2),
-        camPos: new THREE.Vector3(4.5, 2.7, 2.8),
-        target: new THREE.Vector3(6.5, 2.7, 0)
+        vrPos: new THREE.Vector3((SCREEN_X - 1.2) * S, 0, 1.4),
+        camPos: new THREE.Vector3((SCREEN_X - 1.6) * S, 1.6, 1.7),
+        target: new THREE.Vector3(SCREEN_X * S, OPTICAL_AXIS_Y * S, 0)
     },
     screen_front: {
         id: 'screen_front',
         name: 'Target Frontal',
-        vrPos: new THREE.Vector3(5.0, 0, 1.2),
-        camPos: new THREE.Vector3(4.8, 2.7, 0),
-        target: new THREE.Vector3(6.6, 2.7, 0)
+        vrPos: new THREE.Vector3((SCREEN_X - 1.4) * S, 0, 0),
+        camPos: new THREE.Vector3((SCREEN_X - 1.6) * S, OPTICAL_AXIS_Y * S, 0),
+        target: new THREE.Vector3(SCREEN_X * S, OPTICAL_AXIS_Y * S, 0)
     },
     chalkboard: {
         id: 'chalkboard',
         name: 'Theory Blackboard',
-        vrPos: new THREE.Vector3(0, 0, -3.8),
-        camPos: new THREE.Vector3(0, 2.5, -2.6),
-        target: new THREE.Vector3(0, 3.6, -5.6)
+        vrPos: new THREE.Vector3(0, 0, -2.4),
+        camPos: new THREE.Vector3(0, 1.7, -1.8),
+        target: new THREE.Vector3(0, 2.45, -3.71)
     },
     rear: {
         id: 'rear',
         name: 'Rear Lab Angle',
-        vrPos: new THREE.Vector3(0.8, 0, -2.6),
-        camPos: new THREE.Vector3(0.8, 2.7, -3.8),
-        target: new THREE.Vector3(0.8, 2.0, 0.5)
+        vrPos: new THREE.Vector3(0.56, 0, -1.82),
+        camPos: new THREE.Vector3(0.56, 1.75, -2.5),
+        target: new THREE.Vector3(0.56, OPTICAL_AXIS_Y * S, 0.35)
     },
     storage: {
         id: 'storage',
         name: 'Equipment Corner',
-        vrPos: new THREE.Vector3(4.8, 0, 4.4),
-        camPos: new THREE.Vector3(5.2, 2.5, 4.8),
-        target: new THREE.Vector3(1.5, 2.0, 0.5)
+        vrPos: new THREE.Vector3(3.36, 0, 2.8),
+        camPos: new THREE.Vector3(3.64, 1.75, 3.0),
+        target: new THREE.Vector3(1.05, OPTICAL_AXIS_Y * S, 0.35)
     },
     aerial: {
         id: 'aerial',
         name: 'Balcony Overview',
-        vrPos: new THREE.Vector3(1.0, 0, 5.0),
-        camPos: new THREE.Vector3(2.2, 5.0, 6.2),
-        target: new THREE.Vector3(0.8, 1.8, 0)
+        vrPos: new THREE.Vector3(0.7, 0, 3.5),
+        camPos: new THREE.Vector3(1.4, 3.0, 4.0),
+        target: new THREE.Vector3(0.56, OPTICAL_AXIS_Y * S * 0.9, 0)
     }
 };
 
@@ -1375,252 +1454,1356 @@ function updateTeleportPads(delta, elapsedTime) {
         pad.disc.material.opacity = pulse;
         pad.outerRing.material.opacity = 0.55 + Math.sin(elapsedTime * 2.0 + idx) * 0.2;
     });
-}
+}// =============================================================================
+// IN-VR DIEGETIC 3D QUANTUM PALM BOOK (EXPERIMENT CONTROLLER GRIMOIRE)
+// =============================================================================
+let palmBookRoot = null;
+let bookPivot = null;
+let leftPageCanvas = null;
+let leftPageCtx = null;
+let leftPageTexture = null;
+let rightPageCanvas = null;
+let rightPageCtx = null;
+let rightPageTexture = null;
 
-// =============================================================================
-// IN-VR 3D STATIONARY EXPERIMENT CONTROLLER WORKSTATION
-// =============================================================================
+// Page Button 3D Meshes & Textures (3-4 per page)
+const pageButtonMeshes = [];
+const pageButtonCanvases = [];
+const pageButtonContexts = [];
+const pageButtonTextures = [];
+
+// Navigation Footer 3D Meshes
+let prevBtnMesh = null;
+let nextBtnMesh = null;
+let pinBtnMesh = null;
+
+// Page Flip Dynamic Mesh & Animation
+let flippingHinge = null;
+let flippingPageMesh = null;
+let flippingFrontCanvas = null;
+let flippingFrontCtx = null;
+let flippingFrontTexture = null;
+let flippingBackCanvas = null;
+let flippingBackCtx = null;
+let flippingBackTexture = null;
+
+let currentPageIndex = 0;
+let isFlippingPage = false;
+let flipDirection = 1; // 1 for next (R to L), -1 for prev (L to R)
+let flipProgress = 0;
+const FLIP_DURATION = 0.44; // seconds for natural page flip physics
+
+// Interaction State
+let isBookPinned = false;
+let isDesktopBookOpen = false;
+let bookScale = 0.0;
+let targetBookScale = 0.0;
+let bookWorldPos = new THREE.Vector3();
+let bookWorldQuat = new THREE.Quaternion();
+let directTouchCooldown = 0;
+let pokeCursorMesh = null;
+let lastPokeLocalX = null;
+
+// Multi-Theme High-Contrast Color Palettes for Grimoire / Palm Book
+const bookThemes = {
+    obsidian: {
+        id: 'obsidian',
+        name: 'OBSIDIAN CYBER',
+        pageBg: '#060d1b',
+        pageBorder: '#d4af37',
+        pageInnerBorder: 'rgba(0, 240, 255, 0.45)',
+        headerBg: '#0c1527',
+        headerBorder: '#d4af37',
+        headerText: '#fbbf24',
+        cardBg: '#0c1424',
+        cardBorder: 'rgba(0, 240, 255, 0.35)',
+        labelColor: '#f1f5f9',
+        valColor: '#fbbf24',
+        valColorAlt: '#38bdf8',
+        btnBg: '#0c1628',
+        btnText: '#ffffff',
+        accent: '#00f0ff',
+        coverColor: 0x070b14,
+        goldTrim: 0xf59e0b
+    },
+    parchment: {
+        id: 'parchment',
+        name: 'ROYAL PARCHMENT',
+        pageBg: '#faf3e3',
+        pageBorder: '#854d0e',
+        pageInnerBorder: 'rgba(180, 83, 9, 0.45)',
+        headerBg: '#f0e3c5',
+        headerBorder: '#854d0e',
+        headerText: '#78350f',
+        cardBg: '#1e293b',
+        cardBorder: '#854d0e',
+        labelColor: '#f8fafc',
+        valColor: '#fbbf24',
+        valColorAlt: '#38bdf8',
+        btnBg: '#18243b',
+        btnText: '#ffffff',
+        accent: '#b45309',
+        coverColor: 0x2b1408,
+        goldTrim: 0xd97706
+    },
+    tactical: {
+        id: 'tactical',
+        name: 'TACTICAL MATRIX',
+        pageBg: '#010804',
+        pageBorder: '#00ff88',
+        pageInnerBorder: 'rgba(0, 255, 136, 0.45)',
+        headerBg: '#04170d',
+        headerBorder: '#00ff88',
+        headerText: '#00ff88',
+        cardBg: '#05180f',
+        cardBorder: '#00ff88',
+        labelColor: '#dcfce7',
+        valColor: '#facc15',
+        valColorAlt: '#00ff88',
+        btnBg: '#061c10',
+        btnText: '#ffffff',
+        accent: '#00ff88',
+        coverColor: 0x020f08,
+        goldTrim: 0x00ff88
+    }
+};
+
+let currentBookTheme = 'obsidian';
+let coverMatRef = null;
+let goldTrimMatRef = null;
+
+// Legacy backward-compatibility alias
 let vrMenuRoot = null;
-let vrMenuTexture = null;
-let vrMenuCanvas = null;
-let vrMenuCtx = null;
-const vrInteractiveButtons = [];
 
-function createVRInGameMenu() {
-    vrMenuRoot = new THREE.Group();
-    vrMenuRoot.name = 'VR_Stationary_Controller';
+// Multi-Page Book Contents (3-4 controls per page from original board)
+const bookPages = [
+    {
+        chapter: 'CHAPTER 1: CORE SIMULATION',
+        subtitle: 'Primary Quantum Beam Operations',
+        controls: [
+            {
+                id: 'toggle-emitter',
+                getLabel: () => (state.emitterActive ? '⚡ LASER EMITTER: ON' : '⚡ LASER EMITTER: OFF'),
+                getColor: () => (state.emitterActive ? '#00f0ff' : '#64748b'),
+                getBg: () => (state.emitterActive ? 'rgba(0, 240, 255, 0.28)' : 'rgba(30, 41, 59, 0.5)'),
+                icon: '⚡'
+            },
+            {
+                id: 'toggle-detector',
+                getLabel: () => (state.detectorActive ? '👁️ DETECTOR: ON (COLLAPSE)' : '👁️ DETECTOR: OFF (WAVE)'),
+                getColor: () => (state.detectorActive ? '#ff2d87' : '#64748b'),
+                getBg: () => (state.detectorActive ? 'rgba(255, 45, 135, 0.28)' : 'rgba(30, 41, 59, 0.5)'),
+                icon: '👁️'
+            },
+            {
+                id: 'reset-screen',
+                getLabel: () => '🔄 CLEAR DETECTOR SCREEN',
+                getColor: () => '#ffb703',
+                getBg: () => 'rgba(255, 183, 3, 0.25)',
+                icon: '🔄'
+            },
+            {
+                id: 'toggle-beam-mode',
+                getLabel: () => (state.beamMode === 'stream' ? '🌊 BEAM MODE: CONTINUOUS' : '🎯 BEAM MODE: SINGLE PARTICLE'),
+                getColor: () => '#00ff88',
+                getBg: () => 'rgba(0, 255, 136, 0.25)',
+                icon: '🌊'
+            }
+        ]
+    },
+    {
+        chapter: 'CHAPTER 2: PORTALS & SUITES',
+        subtitle: 'Facility Teleportation & Theory',
+        controls: [
+            {
+                id: 'exit-vr-to-hub',
+                getLabel: () => '🏠 RETURN TO MAIN HUB',
+                getColor: () => '#00f0ff',
+                getBg: () => 'rgba(0, 240, 255, 0.25)',
+                icon: '🏠'
+            },
+            {
+                id: 'exit-vr-to-catalog',
+                getLabel: () => '🔬 EXPERIMENTS CATALOG',
+                getColor: () => '#a855f7',
+                getBg: () => 'rgba(168, 85, 247, 0.25)',
+                icon: '🔬'
+            },
+            {
+                id: 'exit-vr-to-theory',
+                getLabel: () => '📚 QUANTUM THEORY SUITE',
+                getColor: () => '#ff2d87',
+                getBg: () => 'rgba(255, 45, 135, 0.25)',
+                icon: '📚'
+            },
+            {
+                id: 'teleport-overview',
+                getLabel: () => '🔭 LABORATORY OVERVIEW',
+                getColor: () => '#38bdf8',
+                getBg: () => 'rgba(56, 189, 248, 0.25)',
+                icon: '🔭'
+            }
+        ]
+    },
+    {
+        chapter: 'CHAPTER 3: APPARATUS STATIONS',
+        subtitle: 'Precision Optical Bench Focus',
+        controls: [
+            {
+                id: 'teleport-emitter',
+                getLabel: () => '⚡ STATION: LASER EMITTER',
+                getColor: () => '#00f0ff',
+                getBg: () => 'rgba(0, 240, 255, 0.22)',
+                icon: '⚡'
+            },
+            {
+                id: 'teleport-slits',
+                getLabel: () => '🚪 STATION: DOUBLE SLITS',
+                getColor: () => '#00f0ff',
+                getBg: () => 'rgba(0, 240, 255, 0.22)',
+                icon: '🚪'
+            },
+            {
+                id: 'teleport-detector',
+                getLabel: () => '👁️ STATION: DETECTOR ARRAY',
+                getColor: () => '#ff2d87',
+                getBg: () => 'rgba(255, 45, 135, 0.22)',
+                icon: '👁️'
+            },
+            {
+                id: 'teleport-beamline',
+                getLabel: () => '〰️ STATION: BEAMLINE AXIS',
+                getColor: () => '#38bdf8',
+                getBg: () => 'rgba(56, 189, 248, 0.22)',
+                icon: '〰️'
+            }
+        ]
+    },
+    {
+        chapter: 'CHAPTER 4: TARGET & WORKBENCH',
+        subtitle: 'Phosphor Screen & Terminal',
+        controls: [
+            {
+                id: 'teleport-screen',
+                getLabel: () => '🎯 STATION: PHOSPHOR SCREEN',
+                getColor: () => '#00ff88',
+                getBg: () => 'rgba(0, 255, 136, 0.22)',
+                icon: '🎯'
+            },
+            {
+                id: 'teleport-screen_front',
+                getLabel: () => '🔍 STATION: SCREEN CLOSEUP',
+                getColor: () => '#00ff88',
+                getBg: () => 'rgba(0, 255, 136, 0.22)',
+                icon: '🔍'
+            },
+            {
+                id: 'teleport-console',
+                getLabel: () => '🖥️ STATION: WORKSTATION',
+                getColor: () => '#00f0ff',
+                getBg: () => 'rgba(0, 240, 255, 0.22)',
+                icon: '🖥️'
+            },
+            {
+                id: 'teleport-chalkboard',
+                getLabel: () => '📝 STATION: CHALKBOARD',
+                getColor: () => '#facc15',
+                getBg: () => 'rgba(250, 204, 21, 0.22)',
+                icon: '📝'
+            }
+        ]
+    },
+    {
+        chapter: 'CHAPTER 5: FACILITY STATIONS',
+        subtitle: 'Surrounding Lab Environment',
+        controls: [
+            {
+                id: 'teleport-storage',
+                getLabel: () => '📦 STATION: STORAGE BAY',
+                getColor: () => '#94a3b8',
+                getBg: () => 'rgba(148, 163, 184, 0.22)',
+                icon: '📦'
+            },
+            {
+                id: 'teleport-aerial',
+                getLabel: () => '🏙️ STATION: BALCONY VISTA',
+                getColor: () => '#38bdf8',
+                getBg: () => 'rgba(56, 189, 248, 0.22)',
+                icon: '🏙️'
+            },
+            {
+                id: 'teleport-rear',
+                getLabel: () => '🚪 STATION: REAR LAB',
+                getColor: () => '#94a3b8',
+                getBg: () => 'rgba(148, 163, 184, 0.22)',
+                icon: '🚪'
+            },
+            {
+                id: 'teleport-overview',
+                getLabel: () => '🔭 STATION: CENTRAL HUB',
+                getColor: () => '#00f0ff',
+                getBg: () => 'rgba(0, 240, 255, 0.22)',
+                icon: '🔭'
+            }
+        ]
+    },
+    {
+        chapter: 'CHAPTER 6: ERGONOMICS & THEME',
+        subtitle: 'Display Theme & Height Calibration',
+        controls: [
+            {
+                id: 'toggle-book-theme',
+                getLabel: () => `🎨 THEME: ${bookThemes[currentBookTheme].name}`,
+                getColor: () => '#a855f7',
+                getBg: () => 'rgba(168, 85, 247, 0.25)',
+                icon: '🎨'
+            },
+            {
+                id: 'vr-height-up',
+                getLabel: () => '▲ RAISE EYE LEVEL (+0.15m)',
+                getColor: () => '#00f0ff',
+                getBg: () => 'rgba(0, 240, 255, 0.22)',
+                icon: '▲'
+            },
+            {
+                id: 'vr-height-down',
+                getLabel: () => '▼ LOWER EYE LEVEL (-0.15m)',
+                getColor: () => '#00f0ff',
+                getBg: () => 'rgba(0, 240, 255, 0.22)',
+                icon: '▼'
+            },
+            {
+                id: 'vr-height-reset',
+                getLabel: () => `⟲ RESET HEIGHT (${state.userHeightOffset >= 0 ? '+' : ''}${state.userHeightOffset.toFixed(2)}m)`,
+                getColor: () => '#94a3b8',
+                getBg: () => 'rgba(148, 163, 184, 0.22)',
+                icon: '⟲'
+            }
+        ]
+    }
+];
 
-    // 1. High Resolution Canvas UI for VR Terminal Display
-    vrMenuCanvas = document.createElement('canvas');
-    vrMenuCanvas.width = 1024;
-    vrMenuCanvas.height = 512;
-    vrMenuCtx = vrMenuCanvas.getContext('2d');
+function createQuantumPalmBook() {
+    palmBookRoot = new THREE.Group();
+    palmBookRoot.name = 'Quantum_Palm_Book';
+    palmBookRoot.scale.set(0, 0, 0);
+    palmBookRoot.visible = false;
+    scene.add(palmBookRoot);
 
-    vrMenuTexture = new THREE.CanvasTexture(vrMenuCanvas);
-    vrMenuTexture.generateMipmaps = true;
-    vrMenuTexture.minFilter = THREE.LinearMipmapLinearFilter;
+    vrMenuRoot = palmBookRoot; // legacy alias
 
-    // 2. 3D Terminal Screen Panel
-    const panelGeo = new THREE.PlaneGeometry(1.2, 0.6);
-    const panelMat = new THREE.MeshStandardMaterial({
-        map: vrMenuTexture,
-        transparent: true,
-        roughness: 0.2,
-        metalness: 0.1,
-        emissive: 0x061525,
-        emissiveMap: vrMenuTexture,
-        emissiveIntensity: 0.85,
-        side: THREE.DoubleSide
+    bookPivot = new THREE.Group();
+    palmBookRoot.add(bookPivot);
+
+    // Book Dimensions: Standard handheld codex (Width: 0.32m, Height: 0.22m, Depth: 0.024m)
+    const PAGE_W = 0.150;
+    const PAGE_H = 0.216;
+
+    // 1. High-Fidelity Cyber-Leather Hardcover & Spine
+    const coverMat = new THREE.MeshStandardMaterial({
+        color: 0x090f1d,
+        roughness: 0.55,
+        metalness: 0.7,
+        emissive: 0x030812,
+        emissiveIntensity: 0.2
     });
-    const panelMesh = new THREE.Mesh(panelGeo, panelMat);
-    vrMenuRoot.add(panelMesh);
+    coverMatRef = coverMat;
 
-    // Frame border for terminal
-    const frameGeo = new THREE.BoxGeometry(1.24, 0.64, 0.02);
-    const frameMat = new THREE.MeshStandardMaterial({
-        color: 0x0a1628,
-        roughness: 0.3,
-        metalness: 0.85
-    });
-    const frameMesh = new THREE.Mesh(frameGeo, frameMat);
-    frameMesh.position.z = -0.012;
-    vrMenuRoot.add(frameMesh);
-
-    // Physical Pedestal Stand grounding the terminal permanently at the console
-    const standMat = new THREE.MeshStandardMaterial({
-        color: 0x141f32,
+    const goldTrimMat = new THREE.MeshStandardMaterial({
+        color: 0xeab308,
         roughness: 0.35,
-        metalness: 0.75
+        metalness: 0.9,
+        emissive: 0x854d0e,
+        emissiveIntensity: 0.2
     });
-    const columnMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 1.45, 16), standMat);
-    columnMesh.position.set(0, -0.72, -0.02);
-    vrMenuRoot.add(columnMesh);
+    goldTrimMatRef = goldTrimMat;
 
-    const basePlate = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.04, 24), standMat);
-    basePlate.position.set(0, -1.45, -0.02);
-    vrMenuRoot.add(basePlate);
+    const cyanGlowMat = new THREE.MeshBasicMaterial({
+        color: 0x00f0ff,
+        transparent: true,
+        opacity: 0.85
+    });
 
-    // 3. Helper to create interactive 3D Buttons on the terminal
-    function addVRButton(x, y, w, h, action, label, colorHex = 0x00f0ff) {
-        const btnGeo = new THREE.PlaneGeometry(w, h);
+    // Center Spine Cylinder (aligned along the vertical Y-axis at the back of the book)
+    const spineGeo = new THREE.CylinderGeometry(0.007, 0.007, PAGE_H + 0.008, 16);
+    const spineMesh = new THREE.Mesh(spineGeo, coverMat);
+    // Cylinder is already vertical along Y - keep it at the back cover (z = -0.005)
+    spineMesh.position.set(0, 0, -0.005);
+    bookPivot.add(spineMesh);
+
+    // Spine End Accent Rings (also aligned vertically along Y at the back cover)
+    [-0.105, 0.105].forEach(yPos => {
+        const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.0085, 0.0085, 0.008, 16), goldTrimMat);
+        ring.position.set(0, yPos, -0.005);
+        bookPivot.add(ring);
+    });
+
+    // Left and Right Cover Boards (Slightly larger than pages with beveled rims)
+    const coverGeo = new THREE.BoxGeometry(PAGE_W + 0.008, PAGE_H + 0.012, 0.006);
+    const leftCover = new THREE.Mesh(coverGeo, coverMat);
+    leftCover.position.set(-(PAGE_W / 2 + 0.006), 0, -0.004);
+    bookPivot.add(leftCover);
+
+    const rightCover = new THREE.Mesh(coverGeo, coverMat);
+    rightCover.position.set(PAGE_W / 2 + 0.006, 0, -0.004);
+    bookPivot.add(rightCover);
+
+    // Gold Corner Brackets for Grimoire Feel
+    const cornerOffsets = [
+        { x: -(PAGE_W + 0.008), y: PAGE_H / 2 },
+        { x: -(PAGE_W + 0.008), y: -PAGE_H / 2 },
+        { x: PAGE_W + 0.008, y: PAGE_H / 2 },
+        { x: PAGE_W + 0.008, y: -PAGE_H / 2 }
+    ];
+    cornerOffsets.forEach(pos => {
+        const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, 0.008), goldTrimMat);
+        bracket.position.set(pos.x > 0 ? pos.x - 0.011 : pos.x + 0.011, pos.y > 0 ? pos.y - 0.011 : pos.y + 0.011, -0.004);
+        bookPivot.add(bracket);
+    });
+
+    // 2. Gilded Edge Paper Blocks (Left and Right)
+    const gildedEdgeMat = new THREE.MeshStandardMaterial({
+        color: 0xd4af37,
+        roughness: 0.6,
+        metalness: 0.55
+    });
+
+    const pageStackGeo = new THREE.BoxGeometry(PAGE_W, PAGE_H, 0.010);
+    const leftStack = new THREE.Mesh(pageStackGeo, gildedEdgeMat);
+    leftStack.position.set(-PAGE_W / 2 - 0.003, 0, 0.005);
+    bookPivot.add(leftStack);
+
+    const rightStack = new THREE.Mesh(pageStackGeo, gildedEdgeMat);
+    rightStack.position.set(PAGE_W / 2 + 0.003, 0, 0.005);
+    bookPivot.add(rightStack);
+
+    // 3. Left Page Surface (Illuminated Field Manual & Live Quantum Telemetry)
+    leftPageCanvas = document.createElement('canvas');
+    leftPageCanvas.width = 1024;
+    leftPageCanvas.height = 1400;
+    leftPageCtx = leftPageCanvas.getContext('2d');
+
+    leftPageTexture = new THREE.CanvasTexture(leftPageCanvas);
+    leftPageTexture.generateMipmaps = true;
+    leftPageTexture.minFilter = THREE.LinearMipmapLinearFilter;
+
+    // Use MeshBasicMaterial: Immune to room glare, provides 100% self-luminous contrast
+    const pageFaceMatLeft = new THREE.MeshBasicMaterial({
+        map: leftPageTexture
+    });
+
+    const leftPageMesh = new THREE.Mesh(new THREE.PlaneGeometry(PAGE_W, PAGE_H), pageFaceMatLeft);
+    leftPageMesh.position.set(-PAGE_W / 2 - 0.003, 0, 0.0105);
+    bookPivot.add(leftPageMesh);
+
+    // Left Page 3D Pin Button
+    const pinBtnGeo = new THREE.BoxGeometry(0.134, 0.024, 0.005);
+    const pinBtnCanvas = document.createElement('canvas');
+    pinBtnCanvas.width = 512;
+    pinBtnCanvas.height = 100;
+    const pinBtnCtx = pinBtnCanvas.getContext('2d');
+    const pinBtnTexture = new THREE.CanvasTexture(pinBtnCanvas);
+
+    const pinBtnMat = new THREE.MeshBasicMaterial({
+        map: pinBtnTexture
+    });
+    pinBtnMesh = new THREE.Mesh(pinBtnGeo, pinBtnMat);
+    pinBtnMesh.position.set(-PAGE_W / 2 - 0.003, -0.088, 0.0135);
+    pinBtnMesh.userData = {
+        action: 'toggle-book-pin',
+        label: '📌 Lock Book in Space',
+        baseZ: 0.0135,
+        currentZ: 0.0135,
+        targetZ: 0.0135,
+        canvas: pinBtnCanvas,
+        ctx: pinBtnCtx,
+        texture: pinBtnTexture
+    };
+    bookPivot.add(pinBtnMesh);
+    interactiveObjects.push(pinBtnMesh);
+
+    // 4. Right Page Surface (Active Chapter Background & Dynamic 3D Controls)
+    rightPageCanvas = document.createElement('canvas');
+    rightPageCanvas.width = 1024;
+    rightPageCanvas.height = 1400;
+    rightPageCtx = rightPageCanvas.getContext('2d');
+
+    rightPageTexture = new THREE.CanvasTexture(rightPageCanvas);
+    rightPageTexture.generateMipmaps = true;
+    rightPageTexture.minFilter = THREE.LinearMipmapLinearFilter;
+
+    const pageFaceMatRight = new THREE.MeshBasicMaterial({
+        map: rightPageTexture
+    });
+
+    const rightPageMesh = new THREE.Mesh(new THREE.PlaneGeometry(PAGE_W, PAGE_H), pageFaceMatRight);
+    rightPageMesh.position.set(PAGE_W / 2 + 0.003, 0, 0.0105);
+    bookPivot.add(rightPageMesh);
+
+    // 4 Tactile 3D Buttons on Right Page
+    const btnBoxGeo = new THREE.BoxGeometry(0.134, 0.033, 0.006);
+    const btnYPositions = [0.058, 0.018, -0.022, -0.062];
+
+    for (let i = 0; i < 4; i++) {
+        const btnCanvas = document.createElement('canvas');
+        btnCanvas.width = 512;
+        btnCanvas.height = 120;
+        const btnCtx = btnCanvas.getContext('2d');
+        const btnTex = new THREE.CanvasTexture(btnCanvas);
+        btnTex.generateMipmaps = true;
+
         const btnMat = new THREE.MeshBasicMaterial({
-            color: colorHex,
-            transparent: true,
-            opacity: 0.01,
-            side: THREE.DoubleSide
+            map: btnTex
         });
-        const btnMesh = new THREE.Mesh(btnGeo, btnMat);
-        btnMesh.position.set(x, y, 0.008);
-        btnMesh.userData = { action, label };
-        vrMenuRoot.add(btnMesh);
+
+        const btnMesh = new THREE.Mesh(btnBoxGeo, btnMat);
+        btnMesh.position.set(PAGE_W / 2 + 0.003, btnYPositions[i], 0.014);
+        btnMesh.userData = {
+            index: i,
+            action: null,
+            label: '',
+            baseZ: 0.014,
+            currentZ: 0.014,
+            targetZ: 0.014,
+            canvas: btnCanvas,
+            ctx: btnCtx,
+            texture: btnTex
+        };
+
+        bookPivot.add(btnMesh);
+        pageButtonMeshes.push(btnMesh);
+        pageButtonCanvases.push(btnCanvas);
+        pageButtonContexts.push(btnCtx);
+        pageButtonTextures.push(btnTex);
         interactiveObjects.push(btnMesh);
-        vrInteractiveButtons.push({ mesh: btnMesh, action, label });
     }
 
-    // Top Row: Navigation (Home / Hub, Catalog, Theory)
-    addVRButton(-0.38, 0.18, 0.32, 0.1, 'exit-vr-to-hub', '🏠 Return to Portal Hub', 0x00f0ff);
-    addVRButton(0.0, 0.18, 0.32, 0.1, 'exit-vr-to-catalog', '🔬 Experiments Catalog', 0xa855f7);
-    addVRButton(0.38, 0.18, 0.32, 0.1, 'exit-vr-to-theory', '📚 Quantum Theory', 0xff2d87);
+    // 5. Navigation Footer 3D Buttons (Prev Page & Next Page)
+    const navBtnGeo = new THREE.BoxGeometry(0.058, 0.024, 0.005);
 
-    // Middle Row: Core Controls (Emitter, Detector, Reset, Mode)
-    addVRButton(-0.42, 0.04, 0.24, 0.09, 'toggle-emitter', '⚡ Emitter Toggle', 0x00f0ff);
-    addVRButton(-0.14, 0.04, 0.28, 0.09, 'toggle-detector', '👁️ Detector Toggle', 0xff2d87);
-    addVRButton(0.16, 0.04, 0.24, 0.09, 'reset-screen', '🔄 Clear Screen', 0xffb703);
-    addVRButton(0.42, 0.04, 0.22, 0.09, 'toggle-beam-mode', '🌊 Beam Mode', 0x00ff88);
+    // Prev Button
+    const prevCanvas = document.createElement('canvas');
+    prevCanvas.width = 256;
+    prevCanvas.height = 100;
+    const prevCtx = prevCanvas.getContext('2d');
+    const prevTex = new THREE.CanvasTexture(prevCanvas);
+    const prevMat = new THREE.MeshBasicMaterial({
+        map: prevTex
+    });
+    prevBtnMesh = new THREE.Mesh(navBtnGeo, prevMat);
+    prevBtnMesh.position.set(PAGE_W / 2 - 0.038, -0.088, 0.0135);
+    prevBtnMesh.userData = {
+        action: 'book-prev-page',
+        label: '◀ Previous Page',
+        baseZ: 0.0135,
+        currentZ: 0.0135,
+        targetZ: 0.0135,
+        canvas: prevCanvas,
+        ctx: prevCtx,
+        texture: prevTex
+    };
+    bookPivot.add(prevBtnMesh);
+    interactiveObjects.push(prevBtnMesh);
 
-    // Station Teleport Row 1 (Apparatus Line)
-    addVRButton(-0.475, -0.05, 0.17, 0.065, 'teleport-overview', 'Teleport: Overview', 0x00f0ff);
-    addVRButton(-0.285, -0.05, 0.17, 0.065, 'teleport-console', 'Teleport: Console', 0x00f0ff);
-    addVRButton(-0.095, -0.05, 0.17, 0.065, 'teleport-emitter', 'Teleport: Emitter', 0x00f0ff);
-    addVRButton(0.095, -0.05, 0.17, 0.065, 'teleport-beamline', 'Teleport: Beamline', 0x00f0ff);
-    addVRButton(0.285, -0.05, 0.17, 0.065, 'teleport-slits', 'Teleport: Slits', 0x00f0ff);
-    addVRButton(0.475, -0.05, 0.17, 0.065, 'teleport-detector', 'Teleport: Detector', 0x00f0ff);
+    // Next Button
+    const nextCanvas = document.createElement('canvas');
+    nextCanvas.width = 256;
+    nextCanvas.height = 100;
+    const nextCtx = nextCanvas.getContext('2d');
+    const nextTex = new THREE.CanvasTexture(nextCanvas);
+    const nextMat = new THREE.MeshBasicMaterial({
+        map: nextTex
+    });
+    nextBtnMesh = new THREE.Mesh(navBtnGeo, nextMat);
+    nextBtnMesh.position.set(PAGE_W / 2 + 0.044, -0.088, 0.0135);
+    nextBtnMesh.userData = {
+        action: 'book-next-page',
+        label: 'Next Page ▶',
+        baseZ: 0.0135,
+        currentZ: 0.0135,
+        targetZ: 0.0135,
+        canvas: nextCanvas,
+        ctx: nextCtx,
+        texture: nextTex
+    };
+    bookPivot.add(nextBtnMesh);
+    interactiveObjects.push(nextBtnMesh);
 
-    // Station Teleport Row 2 (Target & Environment)
-    addVRButton(-0.475, -0.13, 0.17, 0.065, 'teleport-screen', 'Teleport: Screen', 0x00f0ff);
-    addVRButton(-0.285, -0.13, 0.17, 0.065, 'teleport-screen_front', 'Teleport: Target Front', 0x00f0ff);
-    addVRButton(-0.095, -0.13, 0.17, 0.065, 'teleport-chalkboard', 'Teleport: Chalkboard', 0x00f0ff);
-    addVRButton(0.095, -0.13, 0.17, 0.065, 'teleport-rear', 'Teleport: Rear Lab', 0x00f0ff);
-    addVRButton(0.285, -0.13, 0.17, 0.065, 'teleport-storage', 'Teleport: Storage', 0x00f0ff);
-    addVRButton(0.475, -0.13, 0.17, 0.065, 'teleport-aerial', 'Teleport: Balcony', 0x00f0ff);
+    // 6. Realistic 3D Flipping Page Mechanism
+    flippingHinge = new THREE.Group();
+    flippingHinge.position.set(0, 0, 0.011);
+    bookPivot.add(flippingHinge);
 
-    // Bottom Row: Eye Level & Teleport Shortcuts
-    addVRButton(-0.35, -0.22, 0.24, 0.075, 'vr-height-up', '▲ Raise Eye Level', 0x00f0ff);
-    addVRButton(-0.08, -0.22, 0.24, 0.075, 'vr-height-down', '▼ Lower Eye Level', 0x00f0ff);
-    addVRButton(0.18, -0.22, 0.22, 0.075, 'vr-height-reset', '⟲ Reset Height', 0x94a3b8);
-    addVRButton(0.42, -0.22, 0.22, 0.075, 'teleport-overview', '🔭 Lab Overview', 0x00f0ff);
+    flippingFrontCanvas = document.createElement('canvas');
+    flippingFrontCanvas.width = 1024;
+    flippingFrontCanvas.height = 1400;
+    flippingFrontCtx = flippingFrontCanvas.getContext('2d');
+    flippingFrontTexture = new THREE.CanvasTexture(flippingFrontCanvas);
 
-    // Permanent Stationary Location: Separately in the corner near the experiment control desk
-    vrMenuRoot.position.set(-3.6, 1.45, 2.6);
-    vrMenuRoot.rotation.set(0, 0.45, 0);
-    scene.add(vrMenuRoot);
+    flippingBackCanvas = document.createElement('canvas');
+    flippingBackCanvas.width = 1024;
+    flippingBackCanvas.height = 1400;
+    flippingBackCtx = flippingBackCanvas.getContext('2d');
+    flippingBackTexture = new THREE.CanvasTexture(flippingBackCanvas);
 
-    updateVRMenuTexture();
+    // Dynamic Flexible Plane for realistic paper bending during flip
+    const flipGeo = new THREE.PlaneGeometry(PAGE_W, PAGE_H, 20, 6);
+    flipGeo.translate(PAGE_W / 2, 0, 0); // hinge around spine x = 0
+    flipGeo.userData = {
+        origPositions: Float32Array.from(flipGeo.attributes.position.array)
+    };
+
+    const flipMatFront = new THREE.MeshBasicMaterial({
+        map: flippingFrontTexture,
+        side: THREE.FrontSide
+    });
+    const flipMatBack = new THREE.MeshBasicMaterial({
+        map: flippingBackTexture,
+        side: THREE.BackSide
+    });
+
+    const frontPageMesh = new THREE.Mesh(flipGeo, flipMatFront);
+    const backPageMesh = new THREE.Mesh(flipGeo, flipMatBack);
+    flippingHinge.add(frontPageMesh);
+    flippingHinge.add(backPageMesh);
+    flippingHinge.visible = false;
+
+    // 7. Ambient Glowing Magic Spark Particles around Grimoire
+    const sparkCount = 28;
+    const sparkPositions = new Float32Array(sparkCount * 3);
+    for (let i = 0; i < sparkCount; i++) {
+        sparkPositions[i * 3 + 0] = (Math.random() - 0.5) * 0.38;
+        sparkPositions[i * 3 + 1] = (Math.random() - 0.5) * 0.28;
+        sparkPositions[i * 3 + 2] = (Math.random() - 0.5) * 0.08 + 0.02;
+    }
+    const sparkGeo = new THREE.BufferGeometry();
+    sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPositions, 3));
+    const sparkMat = new THREE.PointsMaterial({
+        color: 0x00f0ff,
+        size: 0.007,
+        transparent: true,
+        opacity: 0.75,
+        blending: THREE.AdditiveBlending
+    });
+    const sparks = new THREE.Points(sparkGeo, sparkMat);
+    sparks.name = 'MagicSparks';
+    bookPivot.add(sparks);
+
+    // 8. Holographic Fingertip Poke Cursor with Concentric Reticle Ring
+    const pokeCursorGeo = new THREE.SphereGeometry(0.006, 16, 16);
+    const pokeCursorMat = new THREE.MeshBasicMaterial({
+        color: 0x00f0ff,
+        transparent: true,
+        opacity: 0.9
+    });
+    pokeCursorMesh = new THREE.Mesh(pokeCursorGeo, pokeCursorMat);
+
+    const reticleGeo = new THREE.RingGeometry(0.009, 0.013, 24);
+    const reticleMat = new THREE.MeshBasicMaterial({
+        color: 0x00f0ff,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.8
+    });
+    const reticleMesh = new THREE.Mesh(reticleGeo, reticleMat);
+    pokeCursorMesh.add(reticleMesh);
+
+    pokeCursorMesh.visible = false;
+    scene.add(pokeCursorMesh);
+
+    // Initial Render
+    updatePalmBookUI();
 }
 
-function updateVRMenuTexture() {
-    if (!vrMenuCtx || !vrMenuCanvas) return;
-    const w = vrMenuCanvas.width;
-    const h = vrMenuCanvas.height;
+function triggerPokeHaptics() {
+    const session = renderer.xr.getSession();
+    if (session) {
+        for (const source of session.inputSources) {
+            if (source.gamepad && source.gamepad.hapticActuators && source.gamepad.hapticActuators[0]) {
+                try {
+                    source.gamepad.hapticActuators[0].pulse(0.75, 45);
+                } catch (e) {}
+            }
+        }
+    }
+}
 
-    // Background Cyber Glass Panel
-    vrMenuCtx.fillStyle = 'rgba(8, 14, 28, 0.95)';
-    vrMenuCtx.fillRect(0, 0, w, h);
+function applyBookTheme(themeKey) {
+    if (!bookThemes[themeKey]) themeKey = 'obsidian';
+    currentBookTheme = themeKey;
+    const theme = bookThemes[currentBookTheme];
 
-    // Outer Glow Border
-    vrMenuCtx.strokeStyle = '#00f0ff';
-    vrMenuCtx.lineWidth = 4;
-    vrMenuCtx.strokeRect(6, 6, w - 12, h - 12);
+    if (coverMatRef) {
+        coverMatRef.color.setHex(theme.coverColor);
+    }
+    if (goldTrimMatRef) {
+        goldTrimMatRef.color.setHex(theme.goldTrim);
+    }
 
-    // Header Bar
-    vrMenuCtx.fillStyle = 'rgba(0, 240, 255, 0.12)';
-    vrMenuCtx.fillRect(10, 10, w - 20, 50);
+    updatePalmBookUI();
+}
 
-    vrMenuCtx.font = 'bold 22px Outfit, sans-serif';
-    vrMenuCtx.fillStyle = '#00f0ff';
-    vrMenuCtx.textAlign = 'left';
-    vrMenuCtx.fillText('⚡ QUANTUM XR — VR EXPERIMENT CONTROLLER', 25, 42);
+function updatePalmBookUI() {
+    if (!leftPageCtx || !rightPageCtx) return;
 
-    // Status Badge Top Right
-    vrMenuCtx.textAlign = 'right';
+    const theme = bookThemes[currentBookTheme] || bookThemes.obsidian;
+    const lw = leftPageCanvas.width;
+    const lh = leftPageCanvas.height;
+
+    // -------------------------------------------------------------
+    // RENDER LEFT PAGE: Cyber Grimoire Field Manual & Telemetry
+    // -------------------------------------------------------------
+    leftPageCtx.fillStyle = theme.pageBg;
+    leftPageCtx.fillRect(0, 0, lw, lh);
+
+    // Subtle ambient vignette
+    const grad = leftPageCtx.createRadialGradient(lw / 2, lh / 2, 80, lw / 2, lh / 2, 720);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 0.03)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
+    leftPageCtx.fillStyle = grad;
+    leftPageCtx.fillRect(0, 0, lw, lh);
+
+    // High-Contrast Borders
+    leftPageCtx.strokeStyle = theme.pageBorder;
+    leftPageCtx.lineWidth = 5;
+    leftPageCtx.strokeRect(26, 26, lw - 52, lh - 52);
+
+    leftPageCtx.strokeStyle = theme.pageInnerBorder;
+    leftPageCtx.lineWidth = 2;
+    leftPageCtx.strokeRect(36, 36, lw - 72, lh - 72);
+
+    // Top Header Banner
+    leftPageCtx.fillStyle = theme.headerBg;
+    leftPageCtx.fillRect(45, 48, lw - 90, 84);
+    leftPageCtx.strokeStyle = theme.headerBorder;
+    leftPageCtx.lineWidth = 3.5;
+    leftPageCtx.strokeRect(45, 48, lw - 90, 84);
+
+    leftPageCtx.font = 'bold 36px Outfit, sans-serif';
+    leftPageCtx.textAlign = 'center';
+    leftPageCtx.textBaseline = 'middle';
+    leftPageCtx.strokeStyle = '#000000';
+    leftPageCtx.lineWidth = 5;
+    leftPageCtx.strokeText('📖 QUANTUM XR FIELD MANUAL', lw / 2, 90);
+    leftPageCtx.fillStyle = theme.headerText;
+    leftPageCtx.fillText('📖 QUANTUM XR FIELD MANUAL', lw / 2, 90);
+
+    // Live Quantum Superposition / Observer Collapse Banner
+    const isObserved = state.detectorActive;
+    leftPageCtx.fillStyle = isObserved ? '#4c0519' : '#052e16';
+    leftPageCtx.strokeStyle = isObserved ? '#ff2d87' : '#10b981';
+    leftPageCtx.lineWidth = 4;
+    leftPageCtx.beginPath();
+    leftPageCtx.roundRect(45, 148, lw - 90, 86, 12);
+    leftPageCtx.fill();
+    leftPageCtx.stroke();
+
+    leftPageCtx.font = 'bold 28px Outfit, sans-serif';
+    leftPageCtx.textAlign = 'center';
+    leftPageCtx.textBaseline = 'middle';
+    const statusText = isObserved ? '👁️ OBSERVED (Wavefunction Collapsed)' : '🌊 WAVE SUPERPOSITION (Interference Active)';
+    leftPageCtx.strokeStyle = '#000000';
+    leftPageCtx.lineWidth = 5;
+    leftPageCtx.strokeText(statusText, lw / 2, 191);
+    leftPageCtx.fillStyle = isObserved ? '#ff2d87' : '#10b981';
+    leftPageCtx.fillText(statusText, lw / 2, 191);
+
+    // Live Experiment Telemetry Table (Solid Opaque Card for Maximum Readability)
+    leftPageCtx.fillStyle = theme.cardBg;
+    leftPageCtx.strokeStyle = theme.cardBorder;
+    leftPageCtx.lineWidth = 3;
+    leftPageCtx.beginPath();
+    leftPageCtx.roundRect(45, 252, lw - 90, 485, 14);
+    leftPageCtx.fill();
+    leftPageCtx.stroke();
+
+    leftPageCtx.font = 'bold 26px Outfit, sans-serif';
+    leftPageCtx.textAlign = 'left';
+    leftPageCtx.textBaseline = 'middle';
+    leftPageCtx.strokeStyle = '#000000';
+    leftPageCtx.lineWidth = 4;
+    leftPageCtx.strokeText('⚡ REALTIME EXPERIMENT TELEMETRY', 72, 290);
+    leftPageCtx.fillStyle = theme.valColor;
+    leftPageCtx.fillText('⚡ REALTIME EXPERIMENT TELEMETRY', 72, 290);
+
+    const fringeWidthMm = ((state.wavelength * 1e-9 * state.screenDistance) / (state.slitSeparation * 1e-3)) * 1000;
+    const telemetryRows = [
+        { label: 'TOTAL IMPACT HITS', value: `${state.totalHits.toLocaleString()}` },
+        { label: 'LIGHT WAVELENGTH λ', value: `${state.wavelength} nm` },
+        { label: 'SLIT SEPARATION d', value: `${state.slitSeparation.toFixed(2)} mm` },
+        { label: 'SCREEN DISTANCE D', value: `${state.screenDistance.toFixed(2)} m` },
+        { label: 'FRINGE WIDTH β', value: `${fringeWidthMm.toFixed(2)} mm` },
+        { label: 'EMISSION MODE', value: `${state.beamMode.toUpperCase()}` },
+        { label: 'OBSERVER DETECTOR', value: state.detectorActive ? 'ACTIVE (WHICH-WAY)' : 'INACTIVE (WAVE)' }
+    ];
+
+    telemetryRows.forEach((row, idx) => {
+        const y = 345 + idx * 52;
+
+        // Subtle alternating card stripe
+        if (idx % 2 === 1) {
+            leftPageCtx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+            leftPageCtx.fillRect(60, y - 20, lw - 120, 42);
+        }
+
+        // High-Contrast Label (Left-aligned)
+        leftPageCtx.font = 'bold 24px Outfit, sans-serif';
+        leftPageCtx.textAlign = 'left';
+        leftPageCtx.textBaseline = 'middle';
+        leftPageCtx.strokeStyle = '#000000';
+        leftPageCtx.lineWidth = 4;
+        leftPageCtx.strokeText(row.label, 72, y);
+        leftPageCtx.fillStyle = theme.labelColor;
+        leftPageCtx.fillText(row.label, 72, y);
+
+        // High-Contrast Value (Right-aligned)
+        leftPageCtx.font = 'bold 26px JetBrains Mono, monospace';
+        leftPageCtx.textAlign = 'right';
+        leftPageCtx.textBaseline = 'middle';
+        leftPageCtx.strokeStyle = '#000000';
+        leftPageCtx.lineWidth = 4;
+        leftPageCtx.strokeText(row.value, lw - 72, y);
+        leftPageCtx.fillStyle = (idx === 6 && state.detectorActive) ? '#ff2d87' : theme.valColor;
+        leftPageCtx.fillText(row.value, lw - 72, y);
+
+        // Horizontal separator line
+        leftPageCtx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        leftPageCtx.lineWidth = 1;
+        leftPageCtx.beginPath();
+        leftPageCtx.moveTo(70, y + 23);
+        leftPageCtx.lineTo(lw - 70, y + 23);
+        leftPageCtx.stroke();
+    });
+
+    // Schematic Vector Diagram of Double Slit Optical Line
+    leftPageCtx.fillStyle = theme.cardBg;
+    leftPageCtx.strokeStyle = theme.cardBorder;
+    leftPageCtx.lineWidth = 2.5;
+    leftPageCtx.beginPath();
+    leftPageCtx.roundRect(45, 755, lw - 90, 345, 14);
+    leftPageCtx.fill();
+    leftPageCtx.stroke();
+
+    leftPageCtx.font = 'bold 24px Outfit, sans-serif';
+    leftPageCtx.textAlign = 'left';
+    leftPageCtx.textBaseline = 'middle';
+    leftPageCtx.strokeStyle = '#000000';
+    leftPageCtx.lineWidth = 4;
+    leftPageCtx.strokeText('🔬 OPTICAL BENCH BEAMLINE SCHEMATIC', 72, 792);
+    leftPageCtx.fillStyle = theme.accent;
+    leftPageCtx.fillText('🔬 OPTICAL BENCH BEAMLINE SCHEMATIC', 72, 792);
+
+    // 1. Emitter Box
+    leftPageCtx.fillStyle = state.emitterActive ? '#00f0ff' : '#475569';
+    leftPageCtx.fillRect(80, 860, 72, 72);
+    leftPageCtx.strokeStyle = '#ffffff';
+    leftPageCtx.lineWidth = 2;
+    leftPageCtx.strokeRect(80, 860, 72, 72);
+    leftPageCtx.font = 'bold 18px Outfit, sans-serif';
+    leftPageCtx.fillStyle = '#0f172a';
+    leftPageCtx.textAlign = 'center';
+    leftPageCtx.textBaseline = 'middle';
+    leftPageCtx.fillText('EMIT', 116, 896);
+
+    // 2. Beams
+    leftPageCtx.strokeStyle = state.emitterActive ? '#00f0ff' : '#475569';
+    leftPageCtx.lineWidth = 4;
+    leftPageCtx.beginPath();
+    leftPageCtx.moveTo(152, 896);
+    leftPageCtx.lineTo(380, 896);
+    leftPageCtx.stroke();
+
+    // 3. Double Slits Barrier
+    leftPageCtx.fillStyle = '#94a3b8';
+    leftPageCtx.fillRect(380, 830, 18, 45);
+    leftPageCtx.fillRect(380, 887, 18, 18);
+    leftPageCtx.fillRect(380, 917, 18, 45);
+
+    leftPageCtx.font = 'bold 16px Outfit, sans-serif';
+    leftPageCtx.fillStyle = '#f8fafc';
+    leftPageCtx.fillText('SLITS', 389, 990);
+
+    // 4. Which-way detector icon
     if (state.detectorActive) {
-        vrMenuCtx.fillStyle = '#ff2d87';
-        vrMenuCtx.fillText('👁️ OBSERVED (Wavefunction Collapsed)', w - 25, 42);
-    } else {
-        vrMenuCtx.fillStyle = '#00ff88';
-        vrMenuCtx.fillText('🌊 WAVE SUPERPOSITION (Interference)', w - 25, 42);
+        leftPageCtx.fillStyle = 'rgba(255, 45, 135, 0.4)';
+        leftPageCtx.strokeStyle = '#ff2d87';
+        leftPageCtx.lineWidth = 3;
+        leftPageCtx.beginPath();
+        leftPageCtx.arc(430, 865, 26, 0, Math.PI * 2);
+        leftPageCtx.fill();
+        leftPageCtx.stroke();
+        leftPageCtx.font = '22px Outfit, sans-serif';
+        leftPageCtx.fillStyle = '#ff2d87';
+        leftPageCtx.fillText('👁️', 430, 874);
     }
 
-    // SECTION 1: PRIMARY NAVIGATION BUTTONS (Top Row)
-    drawVRCanvasButton(25, 75, 290, 75, '🏠 EXIT VR TO HUB', '#00f0ff', 'rgba(0, 240, 255, 0.2)');
-    drawVRCanvasButton(340, 75, 340, 75, '🔬 ALL EXPERIMENTS', '#a855f7', 'rgba(168, 85, 247, 0.2)');
-    drawVRCanvasButton(705, 75, 294, 75, '📚 QUANTUM THEORY', '#ff2d87', 'rgba(255, 45, 135, 0.2)');
+    // 5. Screen Target
+    leftPageCtx.fillStyle = '#10b981';
+    leftPageCtx.fillRect(860, 820, 22, 160);
+    leftPageCtx.font = 'bold 16px Outfit, sans-serif';
+    leftPageCtx.fillStyle = '#10b981';
+    leftPageCtx.fillText('SCREEN', 871, 1002);
 
-    // SECTION 2: SIMULATION CONTROLS (Middle Row)
-    const emitterLabel = state.emitterActive ? '⚡ EMITTER: ON' : '⚡ EMITTER: OFF';
-    const emitterColor = state.emitterActive ? '#00f0ff' : '#64748b';
-    drawVRCanvasButton(25, 175, 220, 65, emitterLabel, emitterColor, state.emitterActive ? 'rgba(0, 240, 255, 0.25)' : 'rgba(100, 116, 139, 0.2)');
+    // Draw waves or particle trajectories
+    if (state.emitterActive) {
+        if (!state.detectorActive) {
+            leftPageCtx.strokeStyle = '#00ff88';
+            leftPageCtx.lineWidth = 2.5;
+            for (let r = 30; r < 360; r += 45) {
+                leftPageCtx.beginPath();
+                leftPageCtx.arc(398, 876, r, -0.4, 0.4);
+                leftPageCtx.stroke();
+                leftPageCtx.beginPath();
+                leftPageCtx.arc(398, 906, r, -0.4, 0.4);
+                leftPageCtx.stroke();
+            }
+        } else {
+            leftPageCtx.strokeStyle = '#ff2d87';
+            leftPageCtx.lineWidth = 3;
+            leftPageCtx.setLineDash([8, 6]);
+            leftPageCtx.beginPath();
+            leftPageCtx.moveTo(398, 876);
+            leftPageCtx.lineTo(860, 876);
+            leftPageCtx.moveTo(398, 906);
+            leftPageCtx.lineTo(860, 906);
+            leftPageCtx.stroke();
+            leftPageCtx.setLineDash([]);
+        }
+    }
 
-    const detectorLabel = state.detectorActive ? '👁️ DETECTOR: ON' : '👁️ DETECTOR: OFF';
-    const detectorColor = state.detectorActive ? '#ff2d87' : '#64748b';
-    drawVRCanvasButton(265, 175, 250, 65, detectorLabel, detectorColor, state.detectorActive ? 'rgba(255, 45, 135, 0.25)' : 'rgba(100, 116, 139, 0.2)');
+    // Dog-ear corner fold hint (Bottom-Left corner: ◀ POKE TO FLIP)
+    leftPageCtx.save();
+    leftPageCtx.fillStyle = 'rgba(0, 240, 255, 0.25)';
+    leftPageCtx.beginPath();
+    leftPageCtx.moveTo(30, lh - 30);
+    leftPageCtx.lineTo(145, lh - 30);
+    leftPageCtx.lineTo(30, lh - 145);
+    leftPageCtx.closePath();
+    leftPageCtx.fill();
+    leftPageCtx.strokeStyle = theme.accent;
+    leftPageCtx.lineWidth = 3;
+    leftPageCtx.stroke();
+    leftPageCtx.font = 'bold 20px Outfit, sans-serif';
+    leftPageCtx.fillStyle = theme.accent;
+    leftPageCtx.textAlign = 'left';
+    leftPageCtx.textBaseline = 'middle';
+    leftPageCtx.fillText('◀ POKE', 44, lh - 55);
+    leftPageCtx.restore();
 
-    drawVRCanvasButton(535, 175, 220, 65, '🔄 CLEAR SCREEN', '#ffb703', 'rgba(255, 183, 3, 0.2)');
+    // Quick VR Interaction Guide at bottom
+    leftPageCtx.font = 'bold 22px Outfit, sans-serif';
+    leftPageCtx.fillStyle = theme.labelColor;
+    leftPageCtx.textAlign = 'center';
+    leftPageCtx.textBaseline = 'middle';
+    leftPageCtx.strokeStyle = '#000000';
+    leftPageCtx.lineWidth = 3;
+    leftPageCtx.strokeText('Turn left palm to summon • Poke page corners, buttons, or swipe to turn', lw / 2, 1140);
+    leftPageCtx.fillText('Turn left palm to summon • Poke page corners, buttons, or swipe to turn', lw / 2, 1140);
 
-    const modeLabel = state.beamMode === 'stream' ? '🌊 MODE: STREAM' : '🎯 MODE: SINGLE';
-    drawVRCanvasButton(775, 175, 224, 65, modeLabel, '#00ff88', 'rgba(0, 255, 136, 0.2)');
+    leftPageTexture.needsUpdate = true;
 
-    // SECTION 3: TELEPORTATION PRESETS (Row 3 & 4)
-    vrMenuCtx.font = 'bold 13px Outfit, sans-serif';
-    vrMenuCtx.fillStyle = '#94a3b8';
-    vrMenuCtx.textAlign = 'left';
-    vrMenuCtx.fillText('TELEPORT STATIONS — APPARATUS & FACILITY:', 25, 256);
+    // Render Pin Button Canvas (Solid High-Contrast Button)
+    if (pinBtnMesh && pinBtnMesh.userData.ctx) {
+        const pctx = pinBtnMesh.userData.ctx;
+        pctx.fillStyle = isBookPinned ? '#451a03' : theme.btnBg;
+        pctx.fillRect(0, 0, 512, 100);
 
-    const stationsListRow1 = [
-        { name: 'Overview', x: 25, w: 146 },
-        { name: 'Console', x: 187, w: 146 },
-        { name: 'Emitter', x: 349, w: 146 },
-        { name: 'Beamline', x: 511, w: 146 },
-        { name: 'Slits', x: 673, w: 146 },
-        { name: 'Detector', x: 835, w: 164 }
-    ];
+        pctx.strokeStyle = isBookPinned ? '#fbbf24' : '#00f0ff';
+        pctx.lineWidth = 5;
+        pctx.strokeRect(3, 3, 506, 94);
 
-    stationsListRow1.forEach(st => {
-        drawVRCanvasButton(st.x, 268, st.w, 46, st.name, '#00f0ff', 'rgba(0, 240, 255, 0.15)', 14);
-    });
+        pctx.font = 'bold 28px Outfit, sans-serif';
+        pctx.textAlign = 'center';
+        pctx.textBaseline = 'middle';
+        pctx.strokeStyle = '#000000';
+        pctx.lineWidth = 5;
+        const pinText = isBookPinned ? '📌 PINNED IN SPACE (CLICK TO UNPIN)' : '🤲 ATTACHED TO PALM (CLICK TO PIN)';
+        pctx.strokeText(pinText, 256, 50);
+        pctx.fillStyle = isBookPinned ? '#fbbf24' : '#00f0ff';
+        pctx.fillText(pinText, 256, 50);
+        pinBtnMesh.userData.texture.needsUpdate = true;
+    }
 
-    const stationsListRow2 = [
-        { name: 'Screen', x: 25, w: 146 },
-        { name: 'Target Front', x: 187, w: 146 },
-        { name: 'Chalkboard', x: 349, w: 146 },
-        { name: 'Rear Lab', x: 511, w: 146 },
-        { name: 'Storage', x: 673, w: 146 },
-        { name: 'Balcony', x: 835, w: 164 }
-    ];
+    // -------------------------------------------------------------
+    // RENDER RIGHT PAGE: Active Chapter Background & Layout
+    // -------------------------------------------------------------
+    const rw = rightPageCanvas.width;
+    const rh = rightPageCanvas.height;
 
-    stationsListRow2.forEach(st => {
-        drawVRCanvasButton(st.x, 322, st.w, 46, st.name, '#00f0ff', 'rgba(0, 240, 255, 0.15)', 14);
-    });
+    rightPageCtx.fillStyle = theme.pageBg;
+    rightPageCtx.fillRect(0, 0, rw, rh);
 
-    // SECTION 4: VIEW HEIGHT & SHORTCUTS
-    vrMenuCtx.font = 'bold 13px Outfit, sans-serif';
-    vrMenuCtx.fillStyle = '#94a3b8';
-    vrMenuCtx.textAlign = 'left';
-    vrMenuCtx.fillText(`EYE LEVEL HEIGHT (+${state.userHeightOffset.toFixed(2)}m):`, 25, 394);
+    const rgrad = rightPageCtx.createRadialGradient(rw / 2, rh / 2, 80, rw / 2, rh / 2, 720);
+    rgrad.addColorStop(0, 'rgba(255, 255, 255, 0.03)');
+    rgrad.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
+    rightPageCtx.fillStyle = rgrad;
+    rightPageCtx.fillRect(0, 0, rw, rh);
 
-    drawVRCanvasButton(25, 408, 220, 52, '▲ RAISE (+0.15m)', '#00f0ff', 'rgba(0, 240, 255, 0.15)', 15);
-    drawVRCanvasButton(265, 408, 220, 52, '▼ LOWER (-0.15m)', '#00f0ff', 'rgba(0, 240, 255, 0.15)', 15);
-    drawVRCanvasButton(505, 408, 220, 52, '⟲ RESET HEIGHT', '#94a3b8', 'rgba(148, 163, 184, 0.15)', 15);
-    drawVRCanvasButton(745, 408, 254, 52, '🔭 LAB OVERVIEW', '#00f0ff', 'rgba(0, 240, 255, 0.25)', 15);
+    // Frame
+    rightPageCtx.strokeStyle = theme.pageBorder;
+    rightPageCtx.lineWidth = 5;
+    rightPageCtx.strokeRect(26, 26, rw - 52, rh - 52);
 
-    // Bottom Telemetry Footer
-    vrMenuCtx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-    vrMenuCtx.fillRect(10, 475, w - 20, 28);
-    vrMenuCtx.font = '12px JetBrains Mono, monospace';
-    vrMenuCtx.fillStyle = '#64748b';
-    vrMenuCtx.textAlign = 'center';
-    vrMenuCtx.fillText(`HITS: ${state.totalHits}  |  WAVELENGTH: ${state.wavelength}nm  |  SLIT SEP: ${state.slitSeparation}mm  |  QUEST SHORTCUT: 'B' / 'Y' TO JUMP TO CONSOLE`, w / 2, 494);
+    rightPageCtx.strokeStyle = theme.pageInnerBorder;
+    rightPageCtx.lineWidth = 2;
+    rightPageCtx.strokeRect(36, 36, rw - 72, rh - 72);
 
-    if (vrMenuTexture) vrMenuTexture.needsUpdate = true;
+    const currPageData = bookPages[currentPageIndex] || bookPages[0];
+
+    // Chapter Header Banner (Solid Opaque High Contrast)
+    rightPageCtx.fillStyle = theme.headerBg;
+    rightPageCtx.fillRect(45, 48, rw - 90, 88);
+    rightPageCtx.strokeStyle = theme.headerBorder;
+    rightPageCtx.lineWidth = 3.5;
+    rightPageCtx.strokeRect(45, 48, rw - 90, 88);
+
+    rightPageCtx.font = 'bold 36px Outfit, sans-serif';
+    rightPageCtx.textAlign = 'center';
+    rightPageCtx.textBaseline = 'middle';
+    rightPageCtx.strokeStyle = '#000000';
+    rightPageCtx.lineWidth = 5;
+    rightPageCtx.strokeText(currPageData.chapter, rw / 2, 78);
+    rightPageCtx.fillStyle = theme.headerText;
+    rightPageCtx.fillText(currPageData.chapter, rw / 2, 78);
+
+    rightPageCtx.font = 'bold 24px Outfit, sans-serif';
+    rightPageCtx.strokeStyle = '#000000';
+    rightPageCtx.lineWidth = 3;
+    rightPageCtx.strokeText(currPageData.subtitle, rw / 2, 114);
+    rightPageCtx.fillStyle = '#cbd5e1';
+    rightPageCtx.fillText(currPageData.subtitle, rw / 2, 114);
+
+    // Divider Line
+    rightPageCtx.strokeStyle = theme.pageBorder;
+    rightPageCtx.lineWidth = 2;
+    rightPageCtx.beginPath();
+    rightPageCtx.moveTo(60, 160);
+    rightPageCtx.lineTo(rw - 60, 160);
+    rightPageCtx.stroke();
+
+    // Footer Pagination Bar: PAGE X OF Y with glowing bullet dots
+    rightPageCtx.fillStyle = theme.cardBg;
+    rightPageCtx.strokeStyle = theme.cardBorder;
+    rightPageCtx.lineWidth = 2;
+    rightPageCtx.beginPath();
+    rightPageCtx.roundRect(45, rh - 130, rw - 90, 60, 8);
+    rightPageCtx.fill();
+    rightPageCtx.stroke();
+
+    rightPageCtx.font = 'bold 24px Outfit, sans-serif';
+    rightPageCtx.textAlign = 'center';
+    rightPageCtx.textBaseline = 'middle';
+    rightPageCtx.strokeStyle = '#000000';
+    rightPageCtx.lineWidth = 4;
+    const pageText = `PAGE ${currentPageIndex + 1} OF ${bookPages.length}`;
+    rightPageCtx.strokeText(pageText, rw / 2, rh - 98);
+    rightPageCtx.fillStyle = theme.accent;
+    rightPageCtx.fillText(pageText, rw / 2, rh - 98);
+
+    // Dot indicators
+    const dotSpacing = 30;
+    const startDotX = rw / 2 - ((bookPages.length - 1) * dotSpacing) / 2;
+    for (let d = 0; d < bookPages.length; d++) {
+        rightPageCtx.beginPath();
+        rightPageCtx.arc(startDotX + d * dotSpacing, rh - 58, d === currentPageIndex ? 7 : 4, 0, Math.PI * 2);
+        rightPageCtx.fillStyle = (d === currentPageIndex) ? theme.accent : 'rgba(148, 163, 184, 0.45)';
+        rightPageCtx.fill();
+    }
+
+    // Dog-ear corner fold hint (Bottom-Right corner: POKE TO FLIP ▶)
+    rightPageCtx.save();
+    rightPageCtx.fillStyle = 'rgba(0, 240, 255, 0.25)';
+    rightPageCtx.beginPath();
+    rightPageCtx.moveTo(rw - 145, rh - 30);
+    rightPageCtx.lineTo(rw - 30, rh - 145);
+    rightPageCtx.lineTo(rw - 30, rh - 30);
+    rightPageCtx.closePath();
+    rightPageCtx.fill();
+    rightPageCtx.strokeStyle = theme.accent;
+    rightPageCtx.lineWidth = 3;
+    rightPageCtx.stroke();
+    rightPageCtx.font = 'bold 20px Outfit, sans-serif';
+    rightPageCtx.fillStyle = theme.accent;
+    rightPageCtx.textAlign = 'right';
+    rightPageCtx.textBaseline = 'middle';
+    rightPageCtx.fillText('POKE ▶', rw - 44, rh - 55);
+    rightPageCtx.restore();
+
+    rightPageTexture.needsUpdate = true;
+
+    // Render Navigation Footer Buttons (Prev & Next)
+    renderNavButtons();
+
+    // Render 4 Active 3D Controls on the Page
+    updatePalmBookButtons();
 }
 
-function drawVRCanvasButton(x, y, w, h, text, strokeColor, bgColor, fontSize = 20) {
-    vrMenuCtx.fillStyle = bgColor;
-    vrMenuCtx.strokeStyle = strokeColor;
-    vrMenuCtx.lineWidth = 2;
-    vrMenuCtx.beginPath();
-    vrMenuCtx.roundRect(x, y, w, h, 8);
-    vrMenuCtx.fill();
-    vrMenuCtx.stroke();
+function renderNavButtons() {
+    const theme = bookThemes[currentBookTheme] || bookThemes.obsidian;
 
-    vrMenuCtx.font = `bold ${fontSize}px Outfit, sans-serif`;
-    vrMenuCtx.fillStyle = strokeColor;
-    vrMenuCtx.textAlign = 'center';
-    vrMenuCtx.textBaseline = 'middle';
-    vrMenuCtx.fillText(text, x + w / 2, y + h / 2);
+    if (prevBtnMesh && prevBtnMesh.userData.ctx) {
+        const pctx = prevBtnMesh.userData.ctx;
+        // Solid opaque dark background
+        pctx.fillStyle = theme.btnBg;
+        pctx.fillRect(0, 0, 256, 100);
+
+        pctx.strokeStyle = '#00f0ff';
+        pctx.lineWidth = 5;
+        pctx.strokeRect(3, 3, 250, 94);
+
+        pctx.font = 'bold 26px Outfit, sans-serif';
+        pctx.textAlign = 'center';
+        pctx.textBaseline = 'middle';
+        pctx.strokeStyle = '#000000';
+        pctx.lineWidth = 5;
+        pctx.strokeText('◀ PREV (POKE)', 128, 50);
+        pctx.fillStyle = '#00f0ff';
+        pctx.fillText('◀ PREV (POKE)', 128, 50);
+        prevBtnMesh.userData.texture.needsUpdate = true;
+    }
+
+    if (nextBtnMesh && nextBtnMesh.userData.ctx) {
+        const nctx = nextBtnMesh.userData.ctx;
+        // Solid opaque dark background
+        nctx.fillStyle = theme.btnBg;
+        nctx.fillRect(0, 0, 256, 100);
+
+        nctx.strokeStyle = '#00f0ff';
+        nctx.lineWidth = 5;
+        nctx.strokeRect(3, 3, 250, 94);
+
+        nctx.font = 'bold 26px Outfit, sans-serif';
+        nctx.textAlign = 'center';
+        nctx.textBaseline = 'middle';
+        nctx.strokeStyle = '#000000';
+        nctx.lineWidth = 5;
+        nctx.strokeText('(POKE) NEXT ▶', 128, 50);
+        nctx.fillStyle = '#00f0ff';
+        nctx.fillText('(POKE) NEXT ▶', 128, 50);
+        nextBtnMesh.userData.texture.needsUpdate = true;
+    }
 }
 
-createVRInGameMenu();
+function updatePalmBookButtons() {
+    const theme = bookThemes[currentBookTheme] || bookThemes.obsidian;
+    const pageData = bookPages[currentPageIndex] || bookPages[0];
+    const controls = pageData.controls || [];
+
+    for (let i = 0; i < 4; i++) {
+        const btnMesh = pageButtonMeshes[i];
+        if (!btnMesh) continue;
+
+        if (i < controls.length) {
+            btnMesh.visible = true;
+            const ctrl = controls[i];
+            const label = ctrl.getLabel();
+            const color = ctrl.getColor();
+
+            btnMesh.userData.action = ctrl.id;
+            btnMesh.userData.label = label;
+
+            // Render Dynamic Button Texture
+            const bctx = btnMesh.userData.ctx;
+            const bw = btnMesh.userData.canvas.width;
+            const bh = btnMesh.userData.canvas.height;
+
+            // 1. SOLID OPAQUE DARK PILL BASE (NO MORE TRANSLUCENT GLITCH)
+            bctx.fillStyle = theme.btnBg;
+            bctx.fillRect(0, 0, bw, bh);
+
+            // Subtle depth gradient
+            const bgrad = bctx.createLinearGradient(0, 0, bw, 0);
+            bgrad.addColorStop(0, 'rgba(255, 255, 255, 0.08)');
+            bgrad.addColorStop(1, 'rgba(0, 0, 0, 0.35)');
+            bctx.fillStyle = bgrad;
+            bctx.fillRect(0, 0, bw, bh);
+
+            // 2. VIBRANT BOLD COLORED BORDER
+            bctx.strokeStyle = color;
+            bctx.lineWidth = 6;
+            bctx.strokeRect(3, 3, bw - 6, bh - 6);
+
+            // Inner subtle highlight border
+            bctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+            bctx.lineWidth = 2;
+            bctx.strokeRect(7, 7, bw - 14, bh - 14);
+
+            // 3. ICON ACCENT BOX
+            bctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+            bctx.fillRect(10, 10, 85, bh - 20);
+            bctx.strokeStyle = color;
+            bctx.lineWidth = 3;
+            bctx.strokeRect(10, 10, 85, bh - 20);
+
+            bctx.font = 'bold 44px Outfit, sans-serif';
+            bctx.textAlign = 'center';
+            bctx.textBaseline = 'middle';
+            bctx.fillStyle = '#ffffff';
+            bctx.fillText(ctrl.icon || '⚡', 52, bh / 2);
+
+            // 4. BUTTON TITLE - BOLD WHITE TEXT WITH HEAVY BLACK OUTLINE (ALWAYS CRISP & READABLE)
+            bctx.font = 'bold 31px Outfit, sans-serif';
+            bctx.textAlign = 'left';
+            bctx.textBaseline = 'middle';
+
+            bctx.strokeStyle = '#000000';
+            bctx.lineWidth = 6;
+            bctx.strokeText(label, 115, bh / 2);
+
+            bctx.fillStyle = theme.btnText;
+            bctx.fillText(label, 115, bh / 2);
+
+            btnMesh.userData.texture.needsUpdate = true;
+        } else {
+            btnMesh.visible = false;
+            btnMesh.userData.action = null;
+        }
+    }
+}
+
+function flipToNextPage() {
+    if (isFlippingPage) return;
+    ensureAudio();
+    audio.playPageFlipSound();
+
+    const oldIndex = currentPageIndex;
+    currentPageIndex = (currentPageIndex + 1) % bookPages.length;
+
+    startPageFlip(1, oldIndex, currentPageIndex);
+}
+
+function flipToPrevPage() {
+    if (isFlippingPage) return;
+    ensureAudio();
+    audio.playPageFlipSound();
+
+    const oldIndex = currentPageIndex;
+    currentPageIndex = (currentPageIndex - 1 + bookPages.length) % bookPages.length;
+
+    startPageFlip(-1, oldIndex, currentPageIndex);
+}
+
+function startPageFlip(dir, fromIndex, toIndex) {
+    isFlippingPage = true;
+    flipDirection = dir;
+    flipProgress = 0;
+
+    // Snapshot textures onto the flipping page
+    renderPageSnapshot(flippingFrontCtx, fromIndex);
+    renderPageSnapshot(flippingBackCtx, toIndex);
+    flippingFrontTexture.needsUpdate = true;
+    flippingBackTexture.needsUpdate = true;
+
+    flippingHinge.visible = true;
+
+    if (dir === 1) {
+        // Flipping Next: starts flat on the right (angle = 0), turns left to -Math.PI
+        flippingHinge.rotation.y = 0;
+    } else {
+        // Flipping Prev: starts on the left (-Math.PI), turns right to 0
+        flippingHinge.rotation.y = -Math.PI;
+    }
+
+    // Immediately update background right page so new content is waiting beneath
+    updatePalmBookUI();
+}
+
+function renderPageSnapshot(ctx, pageIdx) {
+    if (!ctx) return;
+    const theme = bookThemes[currentBookTheme] || bookThemes.obsidian;
+    const w = 1024;
+    const h = 1400;
+    const pageData = bookPages[pageIdx] || bookPages[0];
+
+    ctx.fillStyle = theme.pageBg;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.strokeStyle = theme.pageBorder;
+    ctx.lineWidth = 5;
+    ctx.strokeRect(26, 26, w - 52, h - 52);
+
+    ctx.font = 'bold 36px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 5;
+    ctx.strokeText(pageData.chapter, w / 2, 85);
+    ctx.fillStyle = theme.headerText;
+    ctx.fillText(pageData.chapter, w / 2, 85);
+
+    ctx.font = 'bold 24px Outfit, sans-serif';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 3;
+    ctx.strokeText(pageData.subtitle, w / 2, 120);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText(pageData.subtitle, w / 2, 120);
+
+    // Draw buttons representation
+    const ctrls = pageData.controls || [];
+    const btnYOffsets = [240, 480, 720, 960];
+    ctrls.forEach((ctrl, idx) => {
+        if (idx < 4) {
+            const y = btnYOffsets[idx];
+            ctx.fillStyle = theme.btnBg;
+            ctx.fillRect(60, y, w - 120, 180);
+            ctx.strokeStyle = ctrl.getColor();
+            ctx.lineWidth = 6;
+            ctx.strokeRect(60, y, w - 120, 180);
+
+            ctx.font = 'bold 36px Outfit, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 6;
+            ctx.strokeText(ctrl.getLabel(), w / 2, y + 95);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(ctrl.getLabel(), w / 2, y + 95);
+        }
+    });
+
+    ctx.font = 'bold 26px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 4;
+    const pStr = `PAGE ${pageIdx + 1} OF ${bookPages.length}`;
+    ctx.strokeText(pStr, w / 2, h - 80);
+    ctx.fillStyle = theme.accent;
+    ctx.fillText(pStr, w / 2, h - 80);
+}
+
+function toggleBookPin() {
+    isBookPinned = !isBookPinned;
+    ensureAudio();
+    audio.playButtonClick('default');
+
+    if (isBookPinned && palmBookRoot) {
+        // Freeze at current world position
+        palmBookRoot.getWorldPosition(bookWorldPos);
+        palmBookRoot.getWorldQuaternion(bookWorldQuat);
+    }
+    updatePalmBookUI();
+}
+
+function togglePalmBookDesktop() {
+    isDesktopBookOpen = !isDesktopBookOpen;
+    ensureAudio();
+    audio.playButtonClick('default');
+
+    const btnEl = document.getElementById('btn-toggle-palm-book');
+    if (btnEl) btnEl.classList.toggle('active', isDesktopBookOpen);
+}
+
+function isPalmBookVisible() {
+    return bookScale > 0.05;
+}
+
+// Backward-compatible alias
+function updateVRMenuTexture() {
+    updatePalmBookUI();
+}
+
+function repositionVRMenuInFrontOfUser() {
+    togglePalmBookDesktop();
+}
+createQuantumPalmBook();
 
 // =============================================================================
 // INTERACTION & RAYCASTING (DESKTOP + VR)
@@ -1634,7 +2817,13 @@ function trigger3DAction(action) {
     ensureAudio();
     if (!action) return;
 
-    if (action === 'exit-vr-to-hub') {
+    if (action === 'toggle-book-theme') {
+        const themeKeys = ['obsidian', 'parchment', 'tactical'];
+        const nextIdx = (themeKeys.indexOf(currentBookTheme) + 1) % themeKeys.length;
+        applyBookTheme(themeKeys[nextIdx]);
+        audio.playButtonClick('default');
+        return;
+    } else if (action === 'exit-vr-to-hub') {
         audio.playButtonClick('power');
         if (renderer.xr.isPresenting) {
             const session = renderer.xr.getSession();
@@ -1681,9 +2870,17 @@ function trigger3DAction(action) {
         audio.playButtonClick('default');
         updateVRMenuTexture();
         return;
-    } else if (action === 'summon-vr-menu') {
-        repositionVRMenuInFrontOfUser();
-        audio.playButtonClick('default');
+    } else if (action === 'summon-vr-menu' || action === 'toggle-palm-book') {
+        togglePalmBookDesktop();
+        return;
+    } else if (action === 'book-next-page') {
+        flipToNextPage();
+        return;
+    } else if (action === 'book-prev-page') {
+        flipToPrevPage();
+        return;
+    } else if (action === 'toggle-book-pin') {
+        toggleBookPin();
         return;
     } else if (action.startsWith('teleport-')) {
         const stationId = action.replace('teleport-', '');
@@ -1693,16 +2890,28 @@ function trigger3DAction(action) {
         audio.playButtonClick('power');
         pressButton('emitter');
         updateVisualState();
+        updatePalmBookUI();
     } else if (action === 'toggle-detector') {
         state.detectorActive = !state.detectorActive;
         audio.playDetectorSweep(state.detectorActive);
         audio.playButtonClick('detector');
         pressButton('detector');
         updateVisualState();
+        updatePalmBookUI();
     } else if (action === 'reset-screen') {
         clearScreenHits();
         audio.playButtonClick('reset');
         pressButton('reset');
+        updatePalmBookUI();
+    }
+
+    // Tactile button bounce on book
+    const hitBtn = pageButtonMeshes.find(b => b.userData && b.userData.action === action);
+    if (hitBtn) {
+        hitBtn.userData.targetZ = hitBtn.userData.baseZ - 0.0035;
+        setTimeout(() => {
+            hitBtn.userData.targetZ = hitBtn.userData.baseZ;
+        }, 130);
     }
 }
 
@@ -1737,6 +2946,12 @@ window.addEventListener('mousemove', (e) => {
         if (hitObj && hitObj.userData && hitObj.userData.label) {
             hoveredObject = hitObj;
             document.body.style.cursor = 'pointer';
+
+            // Micro-elevation for hovered book buttons
+            if (hitObj.userData.baseZ !== undefined) {
+                hitObj.userData.targetZ = hitObj.userData.baseZ + 0.0028;
+            }
+
             if (tooltip) {
                 tooltip.style.display = 'block';
                 tooltip.style.left = `${e.clientX}px`;
@@ -1747,6 +2962,9 @@ window.addEventListener('mousemove', (e) => {
         }
     }
 
+    if (hoveredObject && hoveredObject.userData && hoveredObject.userData.baseZ !== undefined) {
+        hoveredObject.userData.targetZ = hoveredObject.userData.baseZ;
+    }
     hoveredObject = null;
     document.body.style.cursor = 'default';
     if (tooltip) tooltip.style.display = 'none';
@@ -1772,6 +2990,12 @@ window.addEventListener('keydown', (e) => {
         trigger3DAction('toggle-detector');
     } else if (e.code === 'KeyR') {
         trigger3DAction('reset-screen');
+    } else if (e.code === 'KeyB') {
+        togglePalmBookDesktop();
+    } else if (e.code === 'ArrowRight' && isPalmBookVisible()) {
+        flipToNextPage();
+    } else if (e.code === 'ArrowLeft' && isPalmBookVisible()) {
+        flipToPrevPage();
     }
 });
 
@@ -1811,6 +3035,421 @@ controller2.add(ray2);
 
 xrRig.add(controller1);
 xrRig.add(controller2);
+
+// =============================================================================
+// WEBXR HAND TRACKING SETUP (Quest 2, 3, 3S, Pro & Hand Tracking Systems)
+// =============================================================================
+const hand0 = renderer.xr.getHand(0);
+const hand1 = renderer.xr.getHand(1);
+const handModelFactory = new XRHandModelFactory();
+const handModel0 = handModelFactory.createHandModel(hand0, 'mesh');
+const handModel1 = handModelFactory.createHandModel(hand1, 'mesh');
+hand0.add(handModel0);
+hand1.add(handModel1);
+xrRig.add(hand0);
+xrRig.add(hand1);
+
+let leftHand = null;
+let rightHand = null;
+
+function onHandConnected(e) {
+    if (e.data.handedness === 'left') {
+        leftHand = e.target;
+    } else if (e.data.handedness === 'right') {
+        rightHand = e.target;
+    }
+}
+hand0.addEventListener('connected', onHandConnected);
+hand1.addEventListener('connected', onHandConnected);
+
+function updatePalmBook(delta, elapsedTime) {
+    if (!palmBookRoot) return;
+
+    // 1. Dynamic 3D Page Flip Curling & Rotation Physics
+    if (isFlippingPage && flippingHinge) {
+        flipProgress += delta / FLIP_DURATION;
+        const p = Math.min(1.0, flipProgress);
+        // Smooth Cubic S-Curve Easing
+        const t = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+
+        if (flipDirection === 1) {
+            // Next: rotates from 0 to -Math.PI
+            flippingHinge.rotation.y = -t * Math.PI;
+        } else {
+            // Prev: rotates from -Math.PI to 0
+            flippingHinge.rotation.y = -(1.0 - t) * Math.PI;
+        }
+
+        // Realistic Flexible Paper Arching & Dynamic Curvature
+        const flipMesh = flippingHinge.children[0];
+        if (flipMesh && flipMesh.geometry && flipMesh.geometry.userData.origPositions) {
+            const posAttr = flipMesh.geometry.attributes.position;
+            const orig = flipMesh.geometry.userData.origPositions;
+            const PAGE_W = 0.150;
+
+            for (let i = 0; i < posAttr.count; i++) {
+                const ox = orig[i * 3 + 0];
+                const normX = Math.max(0, Math.min(1, ox / PAGE_W));
+
+                // Arch curl peaks midway through flight (sin(t * PI)) and bows outward in center of page
+                const curlArch = Math.sin(t * Math.PI) * Math.sin(normX * Math.PI) * 0.024;
+                posAttr.array[i * 3 + 2] = curlArch;
+            }
+            posAttr.needsUpdate = true;
+            flipMesh.geometry.computeVertexNormals();
+
+            // Also mirror to back page mesh
+            const backMesh = flippingHinge.children[1];
+            if (backMesh && backMesh.geometry) {
+                const bPosAttr = backMesh.geometry.attributes.position;
+                for (let i = 0; i < bPosAttr.count; i++) {
+                    bPosAttr.array[i * 3 + 2] = posAttr.array[i * 3 + 2];
+                }
+                bPosAttr.needsUpdate = true;
+                backMesh.geometry.computeVertexNormals();
+            }
+        }
+
+        if (flipProgress >= 1.0) {
+            isFlippingPage = false;
+            flippingHinge.visible = false;
+            flippingHinge.rotation.y = 0;
+            updatePalmBookUI();
+        }
+    }
+
+    // 2. Micro-animation button elevation (hover / press springs)
+    [...pageButtonMeshes, prevBtnMesh, nextBtnMesh, pinBtnMesh].forEach(mesh => {
+        if (mesh && mesh.userData && mesh.userData.targetZ !== undefined) {
+            mesh.userData.currentZ += (mesh.userData.targetZ - mesh.userData.currentZ) * 0.35;
+            mesh.position.z = mesh.userData.currentZ;
+        }
+    });
+
+    // 3. Ambient Floating Sparks Gentle Orbit Animation
+    const sparks = bookPivot.getObjectByName('MagicSparks');
+    if (sparks) {
+        sparks.rotation.z += delta * 0.45;
+        sparks.rotation.y = Math.sin(elapsedTime * 1.5) * 0.2;
+    }
+
+    // 4. Hand Tracking / Left Palm Gesture Detection & Placement
+    let showBook = false;
+    let targetPos = new THREE.Vector3();
+    let targetQuat = new THREE.Quaternion();
+
+    if (isBookPinned) {
+        // Book stays locked at pinned world position
+        showBook = true;
+        targetPos.copy(bookWorldPos);
+        targetQuat.copy(bookWorldQuat);
+    } else if (renderer.xr.isPresenting) {
+        // VR Presentation Mode: Check Left Palm / Hand
+        let palmDetected = false;
+
+        if (leftHand && leftHand.joints) {
+            const wrist = leftHand.joints['wrist'];
+            const middleKnuckle = leftHand.joints['middle-finger-metacarpal'] || leftHand.joints['middle-finger-phalanx-proximal'];
+            const indexKnuckle = leftHand.joints['index-finger-phalanx-proximal'] || leftHand.joints['index-finger-metacarpal'];
+            const pinkyKnuckle = leftHand.joints['pinky-finger-phalanx-proximal'] || leftHand.joints['pinky-finger-metacarpal'];
+
+            if (wrist && middleKnuckle && indexKnuckle && pinkyKnuckle) {
+                const wristPos = new THREE.Vector3();
+                const middlePos = new THREE.Vector3();
+                const indexPos = new THREE.Vector3();
+                const pinkyPos = new THREE.Vector3();
+
+                wrist.getWorldPosition(wristPos);
+                middleKnuckle.getWorldPosition(middlePos);
+                indexKnuckle.getWorldPosition(indexPos);
+                pinkyKnuckle.getWorldPosition(pinkyPos);
+
+                const headPos = new THREE.Vector3();
+                camera.getWorldPosition(headPos);
+
+                // Hand raised comfortably in front of user
+                const handRelY = wristPos.y - xrRig.position.y;
+                if (handRelY > 0.65) {
+                    // Finger vector along hand (wrist to middle knuckle)
+                    const vUp = new THREE.Vector3().subVectors(middlePos, wristPos).normalize();
+                    // Across palm (pinky knuckle to index knuckle)
+                    const vAcross = new THREE.Vector3().subVectors(indexPos, pinkyPos).normalize();
+                    // Palm normal: points out from palm surface
+                    const palmNormal = new THREE.Vector3().crossVectors(vUp, vAcross).normalize();
+
+                    // Vector from palm center to player's eyes
+                    const palmCenter = new THREE.Vector3().addVectors(wristPos, middlePos).multiplyScalar(0.5);
+                    const dirToEyes = new THREE.Vector3().subVectors(headPos, palmCenter).normalize();
+
+                    // Palm facing user's eyes (dot product > 0.35)
+                    const palmFacingUser = palmNormal.dot(dirToEyes) > 0.35;
+
+                    if (palmFacingUser) {
+                        palmDetected = true;
+                        showBook = true;
+
+                        // Float 5.5cm directly above center of left palm
+                        targetPos.copy(palmCenter).addScaledVector(palmNormal, 0.055);
+
+                        // Align book orientation to face the user:
+                        // +Z (pages surface) points towards user's eyes
+                        // +Y (top of book) points along fingers (vUp)
+                        // +X (right page) points across hand towards thumb
+                        const zAxis = dirToEyes.clone().normalize();
+                        const yAxis = vUp.clone().normalize();
+                        const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
+                        yAxis.crossVectors(zAxis, xAxis).normalize();
+
+                        const rotMatrix = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+                        targetQuat.setFromRotationMatrix(rotMatrix);
+                    }
+                }
+            }
+        }
+
+        // VR Controller Fallback (when holding Quest Touch Controller in left hand)
+        if (!palmDetected) {
+            const leftCtrl = controller1;
+            const ctrlPos = new THREE.Vector3();
+            leftCtrl.getWorldPosition(ctrlPos);
+            const headPos = new THREE.Vector3();
+            camera.getWorldPosition(headPos);
+
+            const handRelY = ctrlPos.y - xrRig.position.y;
+            if (handRelY > 0.70) {
+                // Vector pointing up from controller top
+                const ctrlUp = new THREE.Vector3(0, 1, 0).applyQuaternion(leftCtrl.quaternion);
+                const dirToEyes = new THREE.Vector3().subVectors(headPos, ctrlPos).normalize();
+
+                // If controller is tilted with face towards user's eyes
+                if (ctrlUp.dot(dirToEyes) > 0.45) {
+                    showBook = true;
+                    targetPos.copy(ctrlPos).addScaledVector(ctrlUp, 0.09);
+
+                    const zAxis = dirToEyes.clone().normalize();
+                    const yAxis = ctrlUp.clone().normalize();
+                    const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
+                    yAxis.crossVectors(zAxis, xAxis).normalize();
+
+                    const rotMatrix = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+                    targetQuat.setFromRotationMatrix(rotMatrix);
+                }
+            }
+        }
+    } else {
+        // Desktop / Non-VR Mode: Toggled via Key 'B' or HUD Button
+        if (isDesktopBookOpen && state.currentAppView === 'experiment') {
+            showBook = true;
+            // Float comfortably at chest level in front of camera
+            const fwd = new THREE.Vector3(0, 0, -0.62).applyQuaternion(camera.quaternion);
+            const down = new THREE.Vector3(0, -0.16, 0);
+            targetPos.copy(camera.position).add(fwd).add(down);
+
+            // Pages (+Z) face the camera, +Y is up, +X is right
+            const zAxis = new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion);
+            const yAxis = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+            const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
+
+            const rotMatrix = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+            targetQuat.setFromRotationMatrix(rotMatrix);
+
+            // Subtle reading angle tilt backwards
+            const tilt = new THREE.Quaternion().setFromAxisAngle(xAxis, -0.32);
+            targetQuat.premultiply(tilt);
+        }
+    }
+
+    // 5. Smooth Transform & Scale Lerping
+    targetBookScale = showBook ? 1.0 : 0.0;
+    bookScale += (targetBookScale - bookScale) * Math.min(1.0, delta * 12);
+    palmBookRoot.scale.setScalar(bookScale);
+    palmBookRoot.visible = (bookScale > 0.01);
+
+    if (palmBookRoot.visible && !isBookPinned) {
+        palmBookRoot.position.lerp(targetPos, Math.min(1.0, delta * 14));
+        palmBookRoot.quaternion.slerp(targetQuat, Math.min(1.0, delta * 14));
+
+        // Subtle gentle levitation breathing bob
+        bookPivot.position.y = Math.sin(elapsedTime * 2.2) * 0.0035;
+        bookPivot.rotation.z = Math.sin(elapsedTime * 1.8) * 0.015;
+    }
+
+    // 6. Direct Finger & Controller Poke Interaction to Flip Pages & Trigger Controls
+    if (directTouchCooldown > 0) {
+        directTouchCooldown -= delta;
+    }
+
+    let cursorActive = false;
+
+    if (showBook && (renderer.xr.isPresenting || isDesktopBookOpen)) {
+        // Collect candidate poke pointers (hands index fingertips + controller tips)
+        const pokePointers = [];
+
+        if (renderer.xr.isPresenting) {
+            // Hand Tracking Fingers
+            const candidates = [rightHand, leftHand, hand0, hand1].filter(Boolean);
+            const visitedHands = new Set();
+
+            for (const h of candidates) {
+                if (!h.joints || visitedHands.has(h)) continue;
+                visitedHands.add(h);
+
+                // If book is on left palm, only poke with right hand or opposite hand
+                if (!isBookPinned && h === leftHand) continue;
+
+                const tip = h.joints['index-finger-tip'] || h.joints['index-finger-phalanx-distal'];
+                if (tip) {
+                    const worldPos = new THREE.Vector3();
+                    tip.getWorldPosition(worldPos);
+                    pokePointers.push({ type: 'hand', worldPos });
+                }
+            }
+
+            // Controller Tip (acts as physical stylus when using VR controllers)
+            [controller1, controller2].forEach(ctrl => {
+                if (ctrl && ctrl.matrixWorld) {
+                    const worldPos = new THREE.Vector3(0, 0, -0.05);
+                    worldPos.applyMatrix4(ctrl.matrixWorld);
+                    pokePointers.push({ type: 'controller', worldPos });
+                }
+            });
+        }
+
+        for (const pointer of pokePointers) {
+            const worldTip = pointer.worldPos;
+            // Convert to bookPivot's local coordinate space
+            const localTip = bookPivot.worldToLocal(worldTip.clone());
+
+            // Check if pointer is within close proximity of the book (0.20m width, 0.15m height, 0.08m depth)
+            const isNearBook = Math.abs(localTip.x) < 0.20 && Math.abs(localTip.y) < 0.15 && localTip.z > -0.03 && localTip.z < 0.08;
+
+            if (isNearBook && pokeCursorMesh) {
+                pokeCursorMesh.position.copy(worldTip);
+                pokeCursorMesh.quaternion.copy(camera.quaternion);
+                pokeCursorMesh.visible = true;
+                cursorActive = true;
+
+                // Contact detection: localTip.z penetrating the page plane (surface at z ≈ 0.0105 - 0.014)
+                const isContactingPlane = (localTip.z >= -0.015 && localTip.z <= 0.020);
+                const isWithinBookBounds = (Math.abs(localTip.y) <= 0.115 && Math.abs(localTip.x) <= 0.165);
+
+                // Highlight cursor when touching surface
+                if (isContactingPlane && isWithinBookBounds) {
+                    if (pokeCursorMesh.material) pokeCursorMesh.material.color.setHex(0xffb703);
+                    pokeCursorMesh.scale.setScalar(1.35);
+                } else {
+                    if (pokeCursorMesh.material) pokeCursorMesh.material.color.setHex(0x00f0ff);
+                    pokeCursorMesh.scale.setScalar(1.0);
+                }
+
+                // Poke Action Triggering
+                if (isContactingPlane && isWithinBookBounds && directTouchCooldown <= 0) {
+                    let pokeHit = false;
+
+                    // A. NEXT PAGE POKE (Poking NEXT button OR Right Page Dog-Ear / Outer Margin)
+                    const isNextBtnPoke = (localTip.x >= 0.075 && localTip.x <= 0.155 && localTip.y >= -0.108 && localTip.y <= -0.065);
+                    const isRightCornerPoke = (localTip.x > 0.055 && localTip.y < -0.065);
+                    const isRightEdgePoke = (localTip.x > 0.125 && Math.abs(localTip.y) < 0.10);
+
+                    if (isNextBtnPoke || isRightCornerPoke || isRightEdgePoke) {
+                        flipToNextPage();
+                        triggerPokeHaptics();
+                        if (nextBtnMesh && nextBtnMesh.userData) {
+                            nextBtnMesh.userData.targetZ = nextBtnMesh.userData.baseZ - 0.005;
+                            setTimeout(() => { if (nextBtnMesh) nextBtnMesh.userData.targetZ = nextBtnMesh.userData.baseZ; }, 140);
+                        }
+                        directTouchCooldown = 0.38;
+                        pokeHit = true;
+                    }
+
+                    // B. PREVIOUS PAGE POKE (Poking PREV button OR Left Page Dog-Ear / Outer Margin)
+                    if (!pokeHit) {
+                        const isPrevBtnPoke = (localTip.x >= 0.005 && localTip.x <= 0.072 && localTip.y >= -0.108 && localTip.y <= -0.065);
+                        const isLeftCornerPoke = (localTip.x < -0.055 && localTip.y < -0.065);
+                        const isLeftEdgePoke = (localTip.x < -0.125 && Math.abs(localTip.y) < 0.10);
+
+                        if (isPrevBtnPoke || isLeftCornerPoke || isLeftEdgePoke) {
+                            flipToPrevPage();
+                            triggerPokeHaptics();
+                            if (prevBtnMesh && prevBtnMesh.userData) {
+                                prevBtnMesh.userData.targetZ = prevBtnMesh.userData.baseZ - 0.005;
+                                setTimeout(() => { if (prevBtnMesh) prevBtnMesh.userData.targetZ = prevBtnMesh.userData.baseZ; }, 140);
+                            }
+                            directTouchCooldown = 0.38;
+                            pokeHit = true;
+                        }
+                    }
+
+                    // C. 3D ACTIVE CONTROL BUTTONS (Right Page 4 Control Slots)
+                    if (!pokeHit) {
+                        for (const btn of pageButtonMeshes) {
+                            if (!btn.visible || !btn.userData || !btn.userData.action) continue;
+                            const dx = Math.abs(localTip.x - btn.position.x);
+                            const dy = Math.abs(localTip.y - btn.position.y);
+                            if (dx < 0.072 && dy < 0.019) {
+                                btn.userData.targetZ = btn.userData.baseZ - 0.005;
+                                setTimeout(() => {
+                                    if (btn.userData) btn.userData.targetZ = btn.userData.baseZ;
+                                }, 140);
+
+                                trigger3DAction(btn.userData.action);
+                                triggerPokeHaptics();
+                                directTouchCooldown = 0.35;
+                                pokeHit = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // D. PIN BOOK BUTTON (Left Page Bottom)
+                    if (!pokeHit && pinBtnMesh && pinBtnMesh.visible) {
+                        const dx = Math.abs(localTip.x - pinBtnMesh.position.x);
+                        const dy = Math.abs(localTip.y - pinBtnMesh.position.y);
+                        if (dx < 0.072 && dy < 0.016) {
+                            pinBtnMesh.userData.targetZ = pinBtnMesh.userData.baseZ - 0.005;
+                            setTimeout(() => {
+                                if (pinBtnMesh.userData) pinBtnMesh.userData.targetZ = pinBtnMesh.userData.baseZ;
+                            }, 140);
+
+                            trigger3DAction('toggle-book-pin');
+                            triggerPokeHaptics();
+                            directTouchCooldown = 0.35;
+                            pokeHit = true;
+                        }
+                    }
+                }
+
+                // E. SWIPE / DRAG INTERACTION (Flicking across the page)
+                if (isContactingPlane && isWithinBookBounds) {
+                    if (lastPokeLocalX !== null && directTouchCooldown <= 0) {
+                        const deltaX = localTip.x - lastPokeLocalX;
+                        if (deltaX < -0.038) {
+                            // Swiped Leftwards -> Turn to Next Page
+                            flipToNextPage();
+                            triggerPokeHaptics();
+                            directTouchCooldown = 0.42;
+                        } else if (deltaX > 0.038) {
+                            // Swiped Rightwards -> Turn to Previous Page
+                            flipToPrevPage();
+                            triggerPokeHaptics();
+                            directTouchCooldown = 0.42;
+                        }
+                    }
+                    lastPokeLocalX = localTip.x;
+                } else {
+                    lastPokeLocalX = null;
+                }
+
+                if (cursorActive) break; // processed closest interacting pointer
+            }
+        }
+    }
+
+    if (!cursorActive && pokeCursorMesh) {
+        pokeCursorMesh.visible = false;
+        lastPokeLocalX = null;
+    }
+}
 
 function onVRSelect(e) {
     const controller = e.target;
@@ -2368,6 +4007,7 @@ function initUIBindings() {
     document.getElementById('ui-btn-emitter')?.addEventListener('click', () => trigger3DAction('toggle-emitter'));
     document.getElementById('ui-btn-detector')?.addEventListener('click', () => trigger3DAction('toggle-detector'));
     document.getElementById('ui-btn-reset')?.addEventListener('click', () => trigger3DAction('reset-screen'));
+    document.getElementById('btn-toggle-palm-book')?.addEventListener('click', () => togglePalmBookDesktop());
 
     // Sound Toggle
     document.getElementById('btn-sound-toggle')?.addEventListener('click', () => {
@@ -2442,9 +4082,9 @@ function initUIBindings() {
     scaleSlider?.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
         state.userScale = val;
-        state.userHeightOffset = (val - 1.0) * 1.6;
+        state.userHeightOffset = (val - 1.0) * 1.5;
         const valScale = document.getElementById('val-user-scale');
-        if (valScale) valScale.textContent = `${val.toFixed(2)}x (+${state.userHeightOffset.toFixed(2)}m)`;
+        if (valScale) valScale.textContent = `${val.toFixed(2)}x (${state.userHeightOffset >= 0 ? '+' : ''}${state.userHeightOffset.toFixed(2)}m)`;
 
         if (renderer.xr.isPresenting) {
             xrRig.position.y = state.userHeightOffset;
@@ -2518,6 +4158,9 @@ renderer.setAnimationLoop(() => {
             controls.update();
         }
     }
+
+    // 8. Update 3D Quantum Palm Book (Gesture Detection, Flipping Physics, Animations)
+    updatePalmBook(delta, elapsedTime);
 
     renderer.render(scene, camera);
 });
