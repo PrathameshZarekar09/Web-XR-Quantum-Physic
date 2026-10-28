@@ -31,7 +31,7 @@ const state = {
     detectorActive: false,
     beamMode: 'stream', // 'stream' | 'single'
     emissionRate: 60,   // particles per sec
-    wavelength: 500,    // nm
+    wavelength: 532,    // nm (Emerald Green default)
     slitSeparation: 0.28, // mm (physical model distance roughly 0.28m mapped)
     slitWidth: 0.06,
     screenDistance: 6.4,
@@ -44,7 +44,35 @@ const state = {
     hitHistogram: new Array(120).fill(0),
     maxHistCount: 1,
     activeView: 'overview',
-    vrMenuVisible: true
+    vrMenuVisible: true,
+
+    // 1. Delayed-Choice Quantum Eraser
+    polarizersActive: false, // Which-way polarizers on slits (|H> and |V>)
+    eraserActive: false,     // 45-deg diagonal eraser polarizer (|D>)
+
+    // 2. Slow-Motion / Quantum Bullet-Time & 3D Wave Packet
+    timeDilation: 1.0,       // 1.0 | 0.25 | 0.05 | 0.0
+    wavePacketActive: false, // 3D volumetric wave envelope
+
+    // 3. Apparatus Geometries
+    availableWavelengths: [532, 650, 488, 405], // Green, Red, Cyan, Violet
+    availableSlitSeparations: [0.16, 0.28, 0.45],
+    availableScreenDistances: [4.5, 6.4, 8.2],
+
+    // 4. AI Voice Narrator
+    narratorEnabled: true,
+
+    // 5. Interactive Chalkboard & Magnifying Lens
+    chalkboardStep: 0,
+    lensActive: false,
+
+    // 6. Quantum Mastery Missions & Badges
+    missions: [
+        { id: 'wave', title: 'WAVE PIONEER', desc: 'Accumulate 100 screen particle hits', completed: false, icon: '🌊' },
+        { id: 'observer', title: 'OBSERVER COLLAPSE', desc: 'Turn on detector to collapse wavefunction', completed: false, icon: '👁️' },
+        { id: 'eraser', title: 'ERASER PARADOX', desc: 'Engage polarizers and eraser together', completed: false, icon: '🪄' },
+        { id: 'bullet', title: 'BULLET-TIME', desc: 'Enter slow-motion or freeze time', completed: false, icon: '⏳' }
+    ]
 };
 
 // =============================================================================
@@ -237,6 +265,51 @@ class QuantumAudioEngine {
         osc.stop(now + 0.36);
     }
 
+    playVictoryChime() {
+        if (!this.initialized || state.audioMuted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6 major arpeggio
+        notes.forEach((freq, idx) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+
+            gain.gain.setValueAtTime(0.001, now + idx * 0.08);
+            gain.gain.linearRampToValueAtTime(0.25, now + idx * 0.08 + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + idx * 0.08 + 0.45);
+
+            osc.connect(gain);
+            gain.connect(this.masterGain);
+
+            osc.start(now + idx * 0.08);
+            osc.stop(now + idx * 0.08 + 0.46);
+        });
+    }
+
+    playQuantumEraserSound(engaged = true) {
+        if (!this.initialized || state.audioMuted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        if (engaged) {
+            osc.frequency.setValueAtTime(440, now);
+            osc.frequency.exponentialRampToValueAtTime(880, now + 0.18);
+            osc.frequency.exponentialRampToValueAtTime(1320, now + 0.35);
+        } else {
+            osc.frequency.setValueAtTime(1320, now);
+            osc.frequency.exponentialRampToValueAtTime(880, now + 0.18);
+            osc.frequency.exponentialRampToValueAtTime(440, now + 0.35);
+        }
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(now);
+        osc.stop(now + 0.38);
+    }
+
     toggleMute() {
         state.audioMuted = !state.audioMuted;
         if (this.masterGain && this.ctx) {
@@ -258,6 +331,23 @@ function ensureAudio() {
 }
 window.addEventListener('click', ensureAudio, { once: true });
 window.addEventListener('keydown', ensureAudio, { once: true });
+
+// AI Voice Narrator ("Dr. Quantum" Lab Guide)
+function speakNarration(text) {
+    if (!state.narratorEnabled || !('speechSynthesis' in window)) return;
+    try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1.05;
+        utterance.pitch = 1.02;
+        const voices = window.speechSynthesis.getVoices();
+        const preferred = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('David') || v.name.includes('Zira') || v.name.includes('Samantha')));
+        if (preferred) utterance.voice = preferred;
+        window.speechSynthesis.speak(utterance);
+    } catch (e) {
+        console.warn('Speech synthesis error:', e);
+    }
+}
 
 // =============================================================================
 // SCENE, CAMERA, RENDERER & HIGH-FIDELITY PBR ENVIRONMENT
@@ -387,22 +477,25 @@ scene.add(screenGlowLight);
 // UNIFIED LASER COLOR (CONSISTENT LASER GREEN AS IN REFERENCE IMAGE)
 // =============================================================================
 function wavelengthToRGB(wl) {
-    // Keep unified laser green matching the reference image (#00ff88)
-    const R = 0;
-    const G = 255;
-    const B = 136;
-    const hex = 0x00ff88;
-    return { r: R, g: G, b: B, hex: hex, css: `rgb(${R}, ${G}, ${B})` };
+    if (wl <= 430) {
+        return { r: 168, g: 85, b: 247, hex: 0xa855f7, name: 'Royal Violet' };
+    } else if (wl <= 505) {
+        return { r: 0, g: 240, b: 255, hex: 0x00f0ff, name: 'Cyan Blue' };
+    } else if (wl <= 580) {
+        return { r: 0, g: 255, b: 136, hex: 0x00ff88, name: 'Emerald Green' };
+    } else {
+        return { r: 255, g: 50, b: 60, hex: 0xff323c, name: 'Ruby Red' };
+    }
 }
 
 function wavelengthToHex(wl) {
-    return 0x00ff88;
+    return wavelengthToRGB(wl).hex;
 }
 
 // =============================================================================
 // REALISTIC OPTICAL LASER INTERFERENCE FRINGE PATTERN RENDERER
 // Generates high-fidelity vertical diffraction & interference fringes
-// with core laser bloom, vertical Gaussian beam fade, and matching spectral color
+// with core laser bloom, vertical Gaussian beam fade, and Delayed-Choice Quantum Eraser logic
 // =============================================================================
 function renderOpticalFringePattern(canvas, ctx, options = {}) {
     if (!canvas || !ctx) return;
@@ -415,6 +508,8 @@ function renderOpticalFringePattern(canvas, ctx, options = {}) {
     const DM = options.screenDistance !== undefined ? options.screenDistance : state.screenDistance;
     const detectorActive = options.detectorActive !== undefined ? options.detectorActive : state.detectorActive;
     const emitterActive = options.emitterActive !== undefined ? options.emitterActive : state.emitterActive;
+    const polarizersActive = options.polarizersActive !== undefined ? options.polarizersActive : state.polarizersActive;
+    const eraserActive = options.eraserActive !== undefined ? options.eraserActive : state.eraserActive;
 
     if (!emitterActive) {
         ctx.fillStyle = '#020403';
@@ -453,14 +548,19 @@ function renderOpticalFringePattern(canvas, ctx, options = {}) {
         lut[i] = (255 << 24) | (B << 16) | (G << 8) | R;
     }
 
-    // 1. Horizontal cross-section: I(z) = cos^2(pi * d * z / lambda D) * sinc^2(pi * a * z / lambda D)
+    // 1. Horizontal cross-section:
     const Ix = new Float32Array(w);
     const lambda = (wl * 1e-9) * 8e5;
     const d = dMm;
     const a = aMm;
     const D = DM;
 
-    if (!detectorActive) {
+    // Delayed-Choice Quantum Eraser Principle:
+    // When polarizers are active, paths have orthogonal polarization |H> vs |V> -> which-way known -> clumps!
+    // When eraser is active at 45-deg |D>, which-way is erased -> interference returns!
+    const hasInterference = (!detectorActive && (!polarizersActive || eraserActive));
+
+    if (hasInterference) {
         for (let x = 0; x < w; x++) {
             const testZ = ((x / w) * 2 - 1) * 1.4;
             const phase = (Math.PI * d * testZ) / (lambda * D);
@@ -469,7 +569,7 @@ function renderOpticalFringePattern(canvas, ctx, options = {}) {
             Ix[x] = Math.cos(phase) * Math.cos(phase) * (sinc * sinc);
         }
     } else {
-        // Decoherence / Observer ON: Classical Double Gaussian Clumps
+        // Decoherence / Observer ON / Which-Way: Classical Double Gaussian Clumps
         const center = d * 1.5;
         const sigma = 0.22;
         for (let x = 0; x < w; x++) {
@@ -631,6 +731,20 @@ const buttonAnimState = {
     detector: { currentY: 0, targetY: 0 },
     reset: { currentY: 0, targetY: 0 }
 };
+
+// 3D Apparatus Props & Lab Extensions
+let polarizerGroup = null;
+let eraserGroup = null;
+let wavePacketGroup = null;
+const waveShells = [];
+let chalkboardMesh = null;
+let chalkboardCanvas = null;
+let chalkboardCtx = null;
+let chalkboardTex = null;
+let inspectionLensMesh = null;
+let probCurveGeo = null;
+let probCurveMat = null;
+const curvePointsCount = 80;
 
 // =============================================================================
 // LOAD GLB 3D MODEL WITH PBR MATERIAL ENHANCEMENT
@@ -820,6 +934,159 @@ loader.load(
             }
         });
 
+        // -------------------------------------------------------------
+        // 1. POLARIZER APPARATUS (Delayed-Choice Quantum Tagging on Slits)
+        // -------------------------------------------------------------
+        polarizerGroup = new THREE.Group();
+        polarizerGroup.name = 'Polarizer_Apparatus';
+        polarizerGroup.position.set(0.06, OPTICAL_AXIS_Y, 0);
+
+        const bracketMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.85, roughness: 0.25 });
+        const bracketMesh = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.48, 0.65), bracketMat);
+        polarizerGroup.add(bracketMesh);
+
+        // Slit 1 (|H> Horizontal Amber Polarizer at z = -0.14)
+        const polGeo = new THREE.PlaneGeometry(0.12, 0.28);
+        const polPlateH = new THREE.Mesh(polGeo, new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
+        polPlateH.position.set(0.022, 0, -0.14);
+        polPlateH.rotation.y = Math.PI / 2;
+        polarizerGroup.add(polPlateH);
+
+        // Slit 2 (|V> Vertical Cyan Polarizer at z = +0.14)
+        const polPlateV = new THREE.Mesh(polGeo, new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
+        polPlateV.position.set(0.022, 0, 0.14);
+        polPlateV.rotation.y = Math.PI / 2;
+        polarizerGroup.add(polPlateV);
+
+        polarizerGroup.visible = state.polarizersActive;
+        modelRoot.add(polarizerGroup);
+
+        // -------------------------------------------------------------
+        // 2. ERASER APPARATUS (45° Diagonal Polarizer Filter)
+        // -------------------------------------------------------------
+        eraserGroup = new THREE.Group();
+        eraserGroup.name = 'Eraser_Apparatus';
+        eraserGroup.position.set(SCREEN_FACE_X - 0.45, OPTICAL_AXIS_Y, 0);
+
+        const eraserRing = new THREE.Mesh(
+            new THREE.TorusGeometry(0.48, 0.025, 16, 36),
+            new THREE.MeshStandardMaterial({ color: 0x00f0ff, metalness: 0.9, roughness: 0.2 })
+        );
+        eraserRing.rotation.y = Math.PI / 2;
+        eraserGroup.add(eraserRing);
+
+        const eraserPlateMat = new THREE.MeshBasicMaterial({
+            color: 0x34d399,
+            transparent: true,
+            opacity: 0.6,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending
+        });
+        const eraserPlate = new THREE.Mesh(new THREE.PlaneGeometry(0.65, 0.65), eraserPlateMat);
+        eraserPlate.rotation.y = Math.PI / 2;
+        eraserPlate.rotation.x = Math.PI / 4; // 45° diagonal projection (|H> + |V>)/sqrt(2)
+        eraserGroup.add(eraserPlate);
+
+        const servoStand = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.7, 24), bracketMat);
+        servoStand.position.set(0, -0.6, 0);
+        eraserGroup.add(servoStand);
+
+        eraserGroup.visible = state.eraserActive;
+        modelRoot.add(eraserGroup);
+
+        // -------------------------------------------------------------
+        // 3. 3D VOLUMETRIC WAVE PACKET SYSTEM
+        // -------------------------------------------------------------
+        wavePacketGroup = new THREE.Group();
+        wavePacketGroup.name = 'Wave_Packet_Group';
+        wavePacketGroup.position.set(0, OPTICAL_AXIS_Y, 0);
+
+        for (let s = 0; s < 6; s++) {
+            const shellGeo = new THREE.SphereGeometry(0.18 + s * 0.25, 24, 24, 0, Math.PI);
+            const shellMat = new THREE.MeshBasicMaterial({
+                color: 0x00ff88,
+                transparent: true,
+                opacity: 0.25 - s * 0.035,
+                wireframe: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+            const shell = new THREE.Mesh(shellGeo, shellMat);
+            shell.rotation.y = -Math.PI / 2;
+            wavePacketGroup.add(shell);
+            waveShells.push(shell);
+        }
+        wavePacketGroup.visible = state.wavePacketActive && state.emitterActive;
+        modelRoot.add(wavePacketGroup);
+
+        // -------------------------------------------------------------
+        // 4. INTERACTIVE 3D THEORY CHALKBOARD
+        // -------------------------------------------------------------
+        chalkboardCanvas = document.createElement('canvas');
+        chalkboardCanvas.width = 1024;
+        chalkboardCanvas.height = 576;
+        chalkboardCtx = chalkboardCanvas.getContext('2d');
+        chalkboardTex = new THREE.CanvasTexture(chalkboardCanvas);
+        chalkboardTex.minFilter = THREE.LinearFilter;
+        chalkboardTex.magFilter = THREE.LinearFilter;
+
+        const chalkboardMat = new THREE.MeshBasicMaterial({ map: chalkboardTex });
+        chalkboardMesh = new THREE.Mesh(new THREE.PlaneGeometry(3.3, 1.85), chalkboardMat);
+        chalkboardMesh.position.set(0, 2.45, -3.65);
+        chalkboardMesh.name = 'Interactive_Chalkboard';
+        scene.add(chalkboardMesh);
+
+        // Interactive Button right beneath chalkboard
+        const cbBtnMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(1.2, 0.18, 0.04),
+            new THREE.MeshBasicMaterial({ color: 0x0284c7 })
+        );
+        cbBtnMesh.position.set(0, 1.38, -3.62);
+        cbBtnMesh.userData = { action: 'chalkboard-next-step', label: 'Next Theory Derivation (Click/Poke)' };
+        scene.add(cbBtnMesh);
+        interactiveObjects.push(cbBtnMesh);
+
+        renderChalkboardCanvas();
+
+        // -------------------------------------------------------------
+        // 5. HANDHELD QUANTUM INSPECTION LENS & 3D PROBABILITY DENSITY
+        // -------------------------------------------------------------
+        inspectionLensMesh = new THREE.Group();
+        inspectionLensMesh.name = 'Inspection_Lens';
+        inspectionLensMesh.position.set(SCREEN_FACE_X - 0.35, OPTICAL_AXIS_Y + 0.65, 0);
+
+        const lensRing = new THREE.Mesh(
+            new THREE.TorusGeometry(0.38, 0.025, 16, 36),
+            new THREE.MeshStandardMaterial({ color: 0x00f0ff, metalness: 0.9, roughness: 0.15 })
+        );
+        lensRing.rotation.y = Math.PI / 2;
+        inspectionLensMesh.add(lensRing);
+
+        const lensGlass = new THREE.Mesh(
+            new THREE.CircleGeometry(0.38, 32),
+            new THREE.MeshBasicMaterial({ color: 0x0369a1, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+        );
+        lensGlass.rotation.y = Math.PI / 2;
+        inspectionLensMesh.add(lensGlass);
+
+        // 3D Probability Density Curve |psi(z)|^2
+        probCurveGeo = new THREE.BufferGeometry();
+        const curvePositions = new Float32Array(curvePointsCount * 3);
+        probCurveGeo.setAttribute('position', new THREE.BufferAttribute(curvePositions, 3));
+        probCurveMat = new THREE.LineBasicMaterial({
+            color: 0x00ff88,
+            linewidth: 3,
+            transparent: true,
+            opacity: 0.95
+        });
+        const probLine = new THREE.Line(probCurveGeo, probCurveMat);
+        probLine.position.set(0.015, -0.22, 0);
+        inspectionLensMesh.add(probLine);
+
+        inspectionLensMesh.visible = state.lensActive;
+        modelRoot.add(inspectionLensMesh);
+        updateProbCurve();
+
         dismissLoadingScreen();
         updateVisualState();
         console.log('YDSE 3D Physics Lab loaded and initialized successfully!');
@@ -857,6 +1124,29 @@ const observedMat = new THREE.MeshBasicMaterial({
     opacity: 0.9,
     blending: THREE.AdditiveBlending
 });
+const polMatH = new THREE.MeshBasicMaterial({
+    color: 0xfbbf24, // Amber tag for |H>
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending
+});
+const polMatV = new THREE.MeshBasicMaterial({
+    color: 0x38bdf8, // Cyan tag for |V>
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending
+});
+
+const wavelengthMatMap = {
+    405: new THREE.MeshBasicMaterial({ color: 0x8b5cf6, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending }),
+    488: new THREE.MeshBasicMaterial({ color: 0x06b6d4, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending }),
+    532: waveMat,
+    650: new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending })
+};
+
+function getWavelengthMaterial(wl) {
+    return wavelengthMatMap[wl] || waveMat;
+}
 
 for (let i = 0; i < MAX_ACTIVE_PARTICLES; i++) {
     const mesh = new THREE.Mesh(particleGeo, waveMat);
@@ -877,17 +1167,21 @@ for (let i = 0; i < MAX_ACTIVE_PARTICLES; i++) {
     });
 }
 
-// Quantum Probability Distribution Sampling
+// Quantum Probability Distribution Sampling (with Delayed-Choice Quantum Eraser)
 function sampleQuantumImpact(detectorActive, wavelength, slitDist) {
     const d = slitDist; // slit separation
     const lambda = (wavelength * 1e-9) * 8e5; // scale wavelength for visual screen mapping
-    const D = 6.6; // distance to screen
+    const D = state.screenDistance || 6.6; // distance to screen
     const a = 0.06; // slit width
 
     let normZ = 0;
     let normY = (Math.random() - 0.5) * 0.8; // vertical dispersion
 
-    if (!detectorActive) {
+    // Quantum Eraser Condition:
+    // Wave interference survives IF detector is OFF AND (polarizers are NOT active OR eraser IS active)
+    const hasInterference = (!detectorActive && (!state.polarizersActive || state.eraserActive));
+
+    if (hasInterference) {
         // Wave Interference Rejection Sampling
         // I(z) = cos^2(pi * d * z / (lambda * D)) * sinc^2(pi * a * z / (lambda * D))
         let accepted = false;
@@ -906,7 +1200,7 @@ function sampleQuantumImpact(detectorActive, wavelength, slitDist) {
             }
         }
     } else {
-        // Detector Active: Classical Double Gaussian Clumps
+        // Classical Double Gaussian Clumps
         const slitChoice = Math.random() < 0.5 ? -1 : 1;
         const center = slitChoice * (d * 1.5);
         const sigma = 0.22; // spread per slit
@@ -926,7 +1220,7 @@ function sampleQuantumImpact(detectorActive, wavelength, slitDist) {
 let lastSpawnTime = 0;
 
 function spawnParticle() {
-    if (!state.emitterActive) return;
+    if (!state.emitterActive || state.timeDilation === 0) return;
 
     const p = particlesPool.find(item => !item.active);
     if (!p) return;
@@ -938,7 +1232,15 @@ function spawnParticle() {
     p.targetNormZ = impact.normZ;
     p.targetNormY = impact.normY;
     p.chosenSlit = impact.normZ < 0 ? -1 : 1;
-    p.mesh.material = state.detectorActive ? observedMat : waveMat;
+
+    // Dynamic material selection based on detector, polarizers, or wavelength
+    if (state.detectorActive) {
+        p.mesh.material = observedMat;
+    } else if (state.polarizersActive && !state.eraserActive) {
+        p.mesh.material = p.chosenSlit < 0 ? polMatH : polMatV;
+    } else {
+        p.mesh.material = getWavelengthMaterial(state.wavelength);
+    }
     p.mesh.visible = true;
 
     // Emitter Aperture Position: x = -3.12, y = OPTICAL_AXIS_Y, z = 0
@@ -946,13 +1248,23 @@ function spawnParticle() {
 }
 
 function updateParticles(delta) {
-    const spawnInterval = 1000 / state.emissionRate;
+    const effDelta = delta * state.timeDilation;
     const now = performance.now();
 
-    if (state.emitterActive && now - lastSpawnTime > spawnInterval) {
-        spawnParticle();
-        lastSpawnTime = now;
+    if (state.emitterActive && state.timeDilation > 0) {
+        const spawnInterval = 1000 / state.emissionRate;
+        if (now - lastSpawnTime > spawnInterval) {
+            spawnParticle();
+            lastSpawnTime = now;
+        }
     }
+
+    if (effDelta <= 0 && state.timeDilation === 0) {
+        // Paused in quantum bullet time
+        return;
+    }
+
+    const hasInterference = (!state.detectorActive && (!state.polarizersActive || state.eraserActive));
 
     // Update active particles along 3-stage path:
     // Stage 1: Emitter (x = -3.12) -> Slit Barrier (x = 0)
@@ -961,7 +1273,7 @@ function updateParticles(delta) {
         const p = particlesPool[i];
         if (!p.active) continue;
 
-        p.progress += p.speed * (delta * 60);
+        p.progress += p.speed * (effDelta * 60);
 
         if (p.progress >= 1.0) {
             // Impact Screen precisely on the canvas face
@@ -991,13 +1303,13 @@ function updateParticles(delta) {
             const targetWorldZ = p.targetNormZ * 1.35;
             const targetWorldY = OPTICAL_AXIS_Y + p.targetNormY * 1.0;
 
-            if (!state.detectorActive) {
+            if (hasInterference) {
                 // Wave mode: quantum sinusoidal probability oscillation
                 const waveSpread = Math.sin(t * Math.PI * 4.0) * (1 - t) * 0.08;
                 posZ = THREE.MathUtils.lerp(0, targetWorldZ, t) + waveSpread;
             } else {
-                // Observed mode: particle passes localized through chosen slit
-                const slitZ = p.chosenSlit * 0.14;
+                // Observed / Which-way mode: particle passes localized through chosen slit
+                const slitZ = p.chosenSlit * (state.slitSeparation || 0.18);
                 if (t < 0.2) {
                     posZ = THREE.MathUtils.lerp(slitZ, slitZ, t / 0.2);
                 } else {
@@ -1011,12 +1323,264 @@ function updateParticles(delta) {
     }
 }
 
+// Quantum Mastery Mission Tracker
+function checkMissionProgress() {
+    let newlyCompleted = false;
+
+    // Mission 1: Wave Pioneer
+    const m1 = state.missions.find(m => m.id === 'wave');
+    if (m1 && !m1.completed) {
+        if (state.totalHits >= 50 && !state.detectorActive && (!state.polarizersActive || state.eraserActive)) {
+            m1.completed = true;
+            newlyCompleted = true;
+            speakNarration('Mission accomplished: Wave Pioneer badge earned! Interference fringes are vividly mapped.');
+        }
+    }
+
+    // Mission 2: Observer Collapse
+    const m2 = state.missions.find(m => m.id === 'observer');
+    if (m2 && !m2.completed) {
+        if (state.detectorActive && state.totalHits >= 25) {
+            m2.completed = true;
+            newlyCompleted = true;
+            speakNarration('Mission accomplished: Quantum Observer Collapse badge earned! Wavefunction has collapsed into two distinct particle clumps.');
+        }
+    }
+
+    // Mission 3: Eraser Paradox
+    const m3 = state.missions.find(m => m.id === 'eraser');
+    if (m3 && !m3.completed) {
+        if (state.polarizersActive && state.eraserActive && state.emitterActive) {
+            m3.completed = true;
+            newlyCompleted = true;
+            speakNarration('Mission accomplished: Eraser Paradox badge earned! Quantum which-way information was successfully erased in flight.');
+        }
+    }
+
+    // Mission 4: Bullet-Time
+    const m4 = state.missions.find(m => m.id === 'bullet');
+    if (m4 && !m4.completed) {
+        if (state.timeDilation < 0.5) {
+            m4.completed = true;
+            newlyCompleted = true;
+            speakNarration('Mission accomplished: Bullet-Time badge earned! Quantum wave packet suspended in relativistic slow motion.');
+        }
+    }
+
+    if (newlyCompleted) {
+        audio.playVictoryChime();
+        updatePalmBookUI();
+    }
+}
+
+// Interactive Theory Chalkboard Renderer
+function renderChalkboardCanvas() {
+    if (!chalkboardCtx || !chalkboardCanvas) return;
+    const ctx = chalkboardCtx;
+    const w = chalkboardCanvas.width;
+    const h = chalkboardCanvas.height;
+
+    // Rich slate chalkboard texture
+    ctx.fillStyle = '#081712';
+    ctx.fillRect(0, 0, w, h);
+
+    // Chalk border
+    ctx.strokeStyle = '#2d5a42';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(16, 16, w - 32, h - 32);
+
+    ctx.strokeStyle = '#1a3829';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(28, 28, w - 56, h - 56);
+
+    // Top Header Banner
+    ctx.fillStyle = '#facc15';
+    ctx.font = 'bold 30px "Segoe UI", Roboto, sans-serif';
+    ctx.fillText('QUANTUM THEORY & APPARATUS FORMALISM', 45, 68);
+
+    ctx.fillStyle = '#6ee7b7';
+    ctx.font = 'bold 20px "Segoe UI", Roboto, sans-serif';
+    ctx.fillText(`DERIVATION STEP ${state.chalkboardStep + 1} OF 4`, w - 310, 68);
+
+    ctx.strokeStyle = '#2d5a42';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(45, 88);
+    ctx.lineTo(w - 45, 88);
+    ctx.stroke();
+
+    if (state.chalkboardStep === 0) {
+        // Step 1: Young's Classical Double Slit
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 32px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('1. Young\'s Double-Slit Optical Path Difference', 55, 140);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '22px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('Geometric Condition for Constructive Interference:', 55, 185);
+
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 36px "Courier New", monospace';
+        ctx.fillText('ΔL = d · sin(θ) ≈ y·d / D = m · λ  (m ∈ ℤ)', 95, 240);
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '22px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('• Fringe Width (Spacing between bright maxima):', 55, 295);
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 28px "Courier New", monospace';
+        ctx.fillText('Δy = λ · D / d', 95, 335);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '20px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('• Shorter λ (Violet 405nm) → tighter fringes. Longer λ (Red 650nm) → wider fringes.', 55, 385);
+        ctx.fillText('• Larger slit separation d → narrower fringe spacing.', 55, 420);
+        ctx.fillText('• Palm Book: Ch. 2 & 3 allow tuning λ, d, and screen distance D in real time.', 55, 455);
+
+        ctx.fillStyle = '#4ade80';
+        ctx.font = 'italic 20px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('▶ Click or poke the button below to view the Heisenberg Measurement Derivation.', 55, 520);
+    } else if (state.chalkboardStep === 1) {
+        // Step 2: Heisenberg & Collapse
+        ctx.fillStyle = '#f43f5e';
+        ctx.font = 'bold 32px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('2. Heisenberg Uncertainty & Which-Way Measurement Collapse', 55, 140);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '22px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('Why detecting the slit destroys wave interference:', 55, 185);
+
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 36px "Courier New", monospace';
+        ctx.fillText('Δp_z · Δz ≥ ℏ / 2', 95, 240);
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '22px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('• To distinguish which slit (Δz < d / 2), momentum kick Δp_z > ℏ / d is imparted.', 55, 295);
+        ctx.fillText('• Phase uncertainty introduced into wave state:', 55, 335);
+        ctx.fillStyle = '#f43f5e';
+        ctx.font = 'bold 28px "Courier New", monospace';
+        ctx.fillText('Δϕ = (Δp_z · d) / ℏ  >  1 radian (Complete Phase Scrambling)', 95, 375);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '20px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('• Superposition collapses: |ψ⟩ = (|1⟩ + |2⟩)/√2  ⟶  |1⟩ or |2⟩ classically.', 55, 430);
+        ctx.fillText('• Screen transforms from interference fringes into two classical Gaussian clumps.', 55, 465);
+
+        ctx.fillStyle = '#4ade80';
+        ctx.font = 'italic 20px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('▶ Click or poke the button below to view the Feynman Path Integral formulation.', 55, 520);
+    } else if (state.chalkboardStep === 2) {
+        // Step 3: Feynman Path Integral
+        ctx.fillStyle = '#a855f7';
+        ctx.font = 'bold 32px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('3. Feynman Path Integral: Sum Over All Histories', 55, 140);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '22px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('Quantum Propagator is a functional integral over all spacetime trajectories:', 55, 185);
+
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 36px "Courier New", monospace';
+        ctx.fillText('K(b, a) = ∫ 𝒟[x(t)] · exp( (i/ℏ) · S[x(t)] )', 95, 240);
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '22px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('• Total probability amplitude at screen coordinate z:', 55, 295);
+        ctx.fillStyle = '#a855f7';
+        ctx.font = 'bold 28px "Courier New", monospace';
+        ctx.fillText('P(z) = |ψ_1(z) + ψ_2(z)|² = |ψ_1|² + |ψ_2|² + 2·Re{ψ_1* · ψ_2}', 95, 335);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '20px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('• The cross-term 2·Re{ψ_1* · ψ_2} creates constructive & destructive fringes.', 55, 390);
+        ctx.fillText('• If paths are distinguished, cross-term vanishes: P(z) = |ψ_1|² + |ψ_2|².', 55, 425);
+        ctx.fillText('• Turn on "3D Wave Packet" in Palm Book to visualize these probability envelopes!', 55, 460);
+
+        ctx.fillStyle = '#4ade80';
+        ctx.font = 'italic 20px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('▶ Click or poke below for the Scully-Drühl Delayed-Choice Quantum Eraser.', 55, 520);
+    } else {
+        // Step 4: Delayed-Choice Quantum Eraser
+        ctx.fillStyle = '#34d399';
+        ctx.font = 'bold 32px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('4. Delayed-Choice Quantum Eraser (Scully & Drühl 1982)', 55, 140);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '22px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('Entangling paths with orthogonal polarization tags |H⟩ and |V⟩:', 55, 185);
+
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 32px "Courier New", monospace';
+        ctx.fillText('|Ψ⟩ = (1/√2) · [ |Slit 1⟩|H⟩ + |Slit 2⟩|V⟩ ]', 95, 235);
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '21px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('• Since ⟨H|V⟩ = 0, paths are marked in principle ⟹ Cross-term vanishes! No fringes.', 55, 285);
+        ctx.fillText('• Eraser Filter at 45° projects states onto |D⟩ = (|H⟩ + |V⟩)/√2:', 55, 325);
+
+        ctx.fillStyle = '#34d399';
+        ctx.font = 'bold 30px "Courier New", monospace';
+        ctx.fillText('⟨D|Ψ⟩ = (1/2) · [ |Slit 1⟩ + |Slit 2⟩ ]  ⟹  Fringes Resurrected!', 95, 370);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '20px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('• Crucial Discovery: Path distinguishability in principle causes collapse, not physical kick!', 55, 425);
+        ctx.fillText('• Erasing information restores interference even while photons are already in flight.', 55, 460);
+
+        ctx.fillStyle = '#4ade80';
+        ctx.font = 'italic 20px "Segoe UI", Roboto, sans-serif';
+        ctx.fillText('▶ Click or poke the button to loop back to Young\'s Classical Double Slit.', 55, 520);
+    }
+
+    if (chalkboardTex) chalkboardTex.needsUpdate = true;
+}
+
+// 3D Probability Density Curve |psi(z)|^2 Updater for Inspection Lens
+function updateProbCurve() {
+    if (!probCurveGeo) return;
+    const pos = probCurveGeo.attributes.position.array;
+    const hasInterference = (!state.detectorActive && (!state.polarizersActive || state.eraserActive));
+    const d = state.slitSeparation;
+    const lambda = (state.wavelength * 1e-9) * 8e5;
+    const D = state.screenDistance || 6.6;
+    const a = 0.06;
+
+    for (let i = 0; i < curvePointsCount; i++) {
+        const normZ = (i / (curvePointsCount - 1)) * 2 - 1; // [-1, 1]
+        const z = normZ * 0.32; // world z inside lens
+        let intensity = 0;
+
+        if (hasInterference) {
+            const phase = (Math.PI * d * normZ * 1.5) / (lambda * D);
+            const sincArg = (Math.PI * a * normZ * 1.5) / (lambda * D);
+            const sinc = sincArg === 0 ? 1 : Math.sin(sincArg) / sincArg;
+            intensity = Math.cos(phase) * Math.cos(phase) * (sinc * sinc);
+        } else {
+            const slitChoice1 = -d * 0.75;
+            const slitChoice2 = d * 0.75;
+            const g1 = Math.exp(-Math.pow((normZ - slitChoice1) / 0.35, 2));
+            const g2 = Math.exp(-Math.pow((normZ - slitChoice2) / 0.35, 2));
+            intensity = 0.5 * (g1 + g2);
+        }
+
+        const y = Math.max(0, Math.min(0.44, intensity * 0.42));
+        pos[i * 3 + 0] = 0; // x relative to lens
+        pos[i * 3 + 1] = y; // height
+        pos[i * 3 + 2] = z; // along z axis
+    }
+    probCurveGeo.attributes.position.needsUpdate = true;
+    if (probCurveMat) {
+        probCurveMat.color.setHex(state.detectorActive ? 0xff2d87 : wavelengthToHex(state.wavelength));
+    }
+}
+
 // =============================================================================
 // VISUAL STATE UPDATER
 // =============================================================================
 function updateVisualState() {
     // Wavelength Color Map
     const colorHex = wavelengthToHex(state.wavelength);
+    const hasInterference = (!state.detectorActive && (!state.polarizersActive || state.eraserActive));
 
     if (buttonNodes.beam) {
         buttonNodes.beam.visible = state.emitterActive;
@@ -1031,9 +1595,18 @@ function updateVisualState() {
 
     // Rectangular Interference Bands on 3D Screen Frame
     buttonNodes.bands.forEach(band => {
-        band.visible = !state.detectorActive && state.emitterActive;
+        band.visible = hasInterference && state.emitterActive;
         band.material.color.set(colorHex);
     });
+
+    // 3D Laboratory Apparatus Updates
+    if (polarizerGroup) polarizerGroup.visible = state.polarizersActive;
+    if (eraserGroup) eraserGroup.visible = state.eraserActive;
+    if (wavePacketGroup) wavePacketGroup.visible = state.wavePacketActive && state.emitterActive;
+    if (inspectionLensMesh) {
+        inspectionLensMesh.visible = state.lensActive;
+        if (state.lensActive) updateProbCurve();
+    }
 
     if (screenMaterial) {
         screenMaterial.emissive.set(state.detectorActive ? 0x2b0515 : (state.emitterActive ? 0x003318 : 0x000000));
@@ -1575,7 +2148,7 @@ let goldTrimMatRef = null;
 // Legacy backward-compatibility alias
 let vrMenuRoot = null;
 
-// Multi-Page Book Contents (3-4 controls per page from original board)
+// Multi-Page Book Contents (7 Chapters incorporating complete quantum physics suite)
 const bookPages = [
     {
         chapter: 'CHAPTER 1: CORE SIMULATION',
@@ -1612,41 +2185,109 @@ const bookPages = [
         ]
     },
     {
-        chapter: 'CHAPTER 2: PORTALS & SUITES',
-        subtitle: 'Facility Teleportation & Theory',
+        chapter: 'CHAPTER 2: QUANTUM ERASER & OPTICS',
+        subtitle: 'Which-Way Polarization & Wave Packet',
         controls: [
             {
-                id: 'exit-vr-to-hub',
-                getLabel: () => '🏠 RETURN TO MAIN HUB',
-                getColor: () => '#00f0ff',
-                getBg: () => 'rgba(0, 240, 255, 0.25)',
-                icon: '🏠'
+                id: 'toggle-polarizers',
+                getLabel: () => (state.polarizersActive ? '🪄 POLARIZERS: ACTIVE (|H⟩/|V⟩)' : '🪄 POLARIZERS: DISABLED'),
+                getColor: () => (state.polarizersActive ? '#fbbf24' : '#64748b'),
+                getBg: () => (state.polarizersActive ? 'rgba(251, 191, 36, 0.28)' : 'rgba(30, 41, 59, 0.5)'),
+                icon: '🪄'
             },
             {
-                id: 'exit-vr-to-catalog',
-                getLabel: () => '🔬 EXPERIMENTS CATALOG',
-                getColor: () => '#a855f7',
-                getBg: () => 'rgba(168, 85, 247, 0.25)',
-                icon: '🔬'
+                id: 'toggle-eraser',
+                getLabel: () => (state.eraserActive ? '✨ 45° ERASER: INSERTED (|D⟩)' : '✨ 45° ERASER: RETRACTED'),
+                getColor: () => (state.eraserActive ? '#34d399' : '#64748b'),
+                getBg: () => (state.eraserActive ? 'rgba(52, 211, 153, 0.28)' : 'rgba(30, 41, 59, 0.5)'),
+                icon: '✨'
             },
             {
-                id: 'exit-vr-to-theory',
-                getLabel: () => '📚 QUANTUM THEORY SUITE',
-                getColor: () => '#ff2d87',
-                getBg: () => 'rgba(255, 45, 135, 0.25)',
-                icon: '📚'
+                id: 'cycle-wavelength',
+                getLabel: () => `🎨 WAVELENGTH: ${state.wavelength}nm (${state.wavelength === 532 ? 'GREEN' : state.wavelength === 650 ? 'RED' : state.wavelength === 488 ? 'CYAN' : 'VIOLET'})`,
+                getColor: () => wavelengthToHex(state.wavelength) ? '#' + wavelengthToHex(state.wavelength).toString(16).padStart(6, '0') : '#00ff88',
+                getBg: () => 'rgba(0, 255, 136, 0.25)',
+                icon: '🎨'
             },
             {
-                id: 'teleport-overview',
-                getLabel: () => '🔭 LABORATORY OVERVIEW',
-                getColor: () => '#38bdf8',
-                getBg: () => 'rgba(56, 189, 248, 0.25)',
-                icon: '🔭'
+                id: 'toggle-wave-packet',
+                getLabel: () => (state.wavePacketActive ? '🌊 3D WAVE PACKET: ON' : '🌊 3D WAVE PACKET: OFF'),
+                getColor: () => (state.wavePacketActive ? '#00f0ff' : '#64748b'),
+                getBg: () => (state.wavePacketActive ? 'rgba(0, 240, 255, 0.25)' : 'rgba(30, 41, 59, 0.5)'),
+                icon: '🌊'
             }
         ]
     },
     {
-        chapter: 'CHAPTER 3: APPARATUS STATIONS',
+        chapter: 'CHAPTER 3: BULLET-TIME & APPARATUS',
+        subtitle: 'Relativistic Speed & Geometry Controls',
+        controls: [
+            {
+                id: 'cycle-time-dilation',
+                getLabel: () => `⏳ SPEED: ${state.timeDilation === 1.0 ? '1.0x NORMAL' : state.timeDilation === 0.25 ? '0.25x SLOW-MO' : state.timeDilation === 0.05 ? '0.05x BULLET-TIME' : 'PAUSED (0.0x)'}`,
+                getColor: () => (state.timeDilation < 1.0 ? '#38bdf8' : '#64748b'),
+                getBg: () => 'rgba(56, 189, 248, 0.25)',
+                icon: '⏳'
+            },
+            {
+                id: 'cycle-slit-sep',
+                getLabel: () => `📏 SLIT SPACING d: ${state.slitSeparation.toFixed(2)} mm`,
+                getColor: () => '#00f0ff',
+                getBg: () => 'rgba(0, 240, 255, 0.22)',
+                icon: '📏'
+            },
+            {
+                id: 'cycle-screen-dist',
+                getLabel: () => `📐 SCREEN DIST D: ${(state.screenDistance || 6.4).toFixed(1)} m`,
+                getColor: () => '#a855f7',
+                getBg: () => 'rgba(168, 85, 247, 0.22)',
+                icon: '📐'
+            },
+            {
+                id: 'toggle-inspection-lens',
+                getLabel: () => (state.lensActive ? '🔍 INSPECTION LENS: ACTIVE' : '🔍 INSPECTION LENS: OFF'),
+                getColor: () => (state.lensActive ? '#00ff88' : '#64748b'),
+                getBg: () => (state.lensActive ? 'rgba(0, 255, 136, 0.25)' : 'rgba(30, 41, 59, 0.5)'),
+                icon: '🔍'
+            }
+        ]
+    },
+    {
+        chapter: 'CHAPTER 4: QUANTUM MISSIONS & BADGES',
+        subtitle: 'Mastery Badges & Discovery Journal',
+        controls: [
+            {
+                id: 'mission-wave',
+                getLabel: () => `${state.missions[0].completed ? '✅' : '⭕'} 1. WAVE PIONEER [${state.missions[0].completed ? 'EARNED' : 'INCOMPLETE'}]`,
+                getColor: () => (state.missions[0].completed ? '#00ff88' : '#f59e0b'),
+                getBg: () => (state.missions[0].completed ? 'rgba(0, 255, 136, 0.25)' : 'rgba(245, 158, 11, 0.25)'),
+                icon: state.missions[0].icon
+            },
+            {
+                id: 'mission-observer',
+                getLabel: () => `${state.missions[1].completed ? '✅' : '⭕'} 2. OBSERVER COLLAPSE [${state.missions[1].completed ? 'EARNED' : 'INCOMPLETE'}]`,
+                getColor: () => (state.missions[1].completed ? '#00ff88' : '#f59e0b'),
+                getBg: () => (state.missions[1].completed ? 'rgba(0, 255, 136, 0.25)' : 'rgba(245, 158, 11, 0.25)'),
+                icon: state.missions[1].icon
+            },
+            {
+                id: 'mission-eraser',
+                getLabel: () => `${state.missions[2].completed ? '✅' : '⭕'} 3. ERASER PARADOX [${state.missions[2].completed ? 'EARNED' : 'INCOMPLETE'}]`,
+                getColor: () => (state.missions[2].completed ? '#00ff88' : '#f59e0b'),
+                getBg: () => (state.missions[2].completed ? 'rgba(0, 255, 136, 0.25)' : 'rgba(245, 158, 11, 0.25)'),
+                icon: state.missions[2].icon
+            },
+            {
+                id: 'mission-bullet',
+                getLabel: () => `${state.missions[3].completed ? '✅' : '⭕'} 4. BULLET-TIME [${state.missions[3].completed ? 'EARNED' : 'INCOMPLETE'}]`,
+                getColor: () => (state.missions[3].completed ? '#00ff88' : '#f59e0b'),
+                getBg: () => (state.missions[3].completed ? 'rgba(0, 255, 136, 0.25)' : 'rgba(245, 158, 11, 0.25)'),
+                icon: state.missions[3].icon
+            }
+        ]
+    },
+    {
+        chapter: 'CHAPTER 5: APPARATUS STATIONS',
         subtitle: 'Precision Optical Bench Focus',
         controls: [
             {
@@ -1671,31 +2312,24 @@ const bookPages = [
                 icon: '👁️'
             },
             {
-                id: 'teleport-beamline',
-                getLabel: () => '〰️ STATION: BEAMLINE AXIS',
-                getColor: () => '#38bdf8',
-                getBg: () => 'rgba(56, 189, 248, 0.22)',
-                icon: '〰️'
-            }
-        ]
-    },
-    {
-        chapter: 'CHAPTER 4: TARGET & WORKBENCH',
-        subtitle: 'Phosphor Screen & Terminal',
-        controls: [
-            {
                 id: 'teleport-screen',
                 getLabel: () => '🎯 STATION: PHOSPHOR SCREEN',
                 getColor: () => '#00ff88',
                 getBg: () => 'rgba(0, 255, 136, 0.22)',
                 icon: '🎯'
-            },
+            }
+        ]
+    },
+    {
+        chapter: 'CHAPTER 6: FACILITY & SUITES',
+        subtitle: 'Interactive Blackboard & Hub',
+        controls: [
             {
-                id: 'teleport-screen_front',
-                getLabel: () => '🔍 STATION: SCREEN CLOSEUP',
-                getColor: () => '#00ff88',
-                getBg: () => 'rgba(0, 255, 136, 0.22)',
-                icon: '🔍'
+                id: 'teleport-chalkboard',
+                getLabel: () => '📝 STATION: THEORY BLACKBOARD',
+                getColor: () => '#facc15',
+                getBg: () => 'rgba(250, 204, 21, 0.22)',
+                icon: '📝'
             },
             {
                 id: 'teleport-console',
@@ -1705,26 +2339,6 @@ const bookPages = [
                 icon: '🖥️'
             },
             {
-                id: 'teleport-chalkboard',
-                getLabel: () => '📝 STATION: CHALKBOARD',
-                getColor: () => '#facc15',
-                getBg: () => 'rgba(250, 204, 21, 0.22)',
-                icon: '📝'
-            }
-        ]
-    },
-    {
-        chapter: 'CHAPTER 5: FACILITY STATIONS',
-        subtitle: 'Surrounding Lab Environment',
-        controls: [
-            {
-                id: 'teleport-storage',
-                getLabel: () => '📦 STATION: STORAGE BAY',
-                getColor: () => '#94a3b8',
-                getBg: () => 'rgba(148, 163, 184, 0.22)',
-                icon: '📦'
-            },
-            {
                 id: 'teleport-aerial',
                 getLabel: () => '🏙️ STATION: BALCONY VISTA',
                 getColor: () => '#38bdf8',
@@ -1732,24 +2346,17 @@ const bookPages = [
                 icon: '🏙️'
             },
             {
-                id: 'teleport-rear',
-                getLabel: () => '🚪 STATION: REAR LAB',
-                getColor: () => '#94a3b8',
-                getBg: () => 'rgba(148, 163, 184, 0.22)',
-                icon: '🚪'
-            },
-            {
-                id: 'teleport-overview',
-                getLabel: () => '🔭 STATION: CENTRAL HUB',
+                id: 'exit-vr-to-hub',
+                getLabel: () => '🏠 RETURN TO MAIN HUB',
                 getColor: () => '#00f0ff',
-                getBg: () => 'rgba(0, 240, 255, 0.22)',
-                icon: '🔭'
+                getBg: () => 'rgba(0, 240, 255, 0.25)',
+                icon: '🏠'
             }
         ]
     },
     {
-        chapter: 'CHAPTER 6: ERGONOMICS & THEME',
-        subtitle: 'Display Theme & Height Calibration',
+        chapter: 'CHAPTER 7: ERGONOMICS, THEME & AI',
+        subtitle: 'Dr. Quantum Voice & Eye Calibration',
         controls: [
             {
                 id: 'toggle-book-theme',
@@ -1757,6 +2364,13 @@ const bookPages = [
                 getColor: () => '#a855f7',
                 getBg: () => 'rgba(168, 85, 247, 0.25)',
                 icon: '🎨'
+            },
+            {
+                id: 'toggle-narrator',
+                getLabel: () => (state.narratorEnabled ? '🎙️ DR. QUANTUM AI: VOICED' : '🎙️ DR. QUANTUM AI: MUTED'),
+                getColor: () => (state.narratorEnabled ? '#00f0ff' : '#64748b'),
+                getBg: () => (state.narratorEnabled ? 'rgba(0, 240, 255, 0.25)' : 'rgba(30, 41, 59, 0.5)'),
+                icon: '🎙️'
             },
             {
                 id: 'vr-height-up',
@@ -1771,13 +2385,6 @@ const bookPages = [
                 getColor: () => '#00f0ff',
                 getBg: () => 'rgba(0, 240, 255, 0.22)',
                 icon: '▼'
-            },
-            {
-                id: 'vr-height-reset',
-                getLabel: () => `⟲ RESET HEIGHT (${state.userHeightOffset >= 0 ? '+' : ''}${state.userHeightOffset.toFixed(2)}m)`,
-                getColor: () => '#94a3b8',
-                getBg: () => 'rgba(148, 163, 184, 0.22)',
-                icon: '⟲'
             }
         ]
     }
@@ -1946,7 +2553,7 @@ function createQuantumPalmBook() {
 
     for (let i = 0; i < 4; i++) {
         const btnCanvas = document.createElement('canvas');
-        btnCanvas.width = 512;
+        btnCanvas.width = 640;
         btnCanvas.height = 120;
         const btnCtx = btnCanvas.getContext('2d');
         const btnTex = new THREE.CanvasTexture(btnCanvas);
@@ -2188,24 +2795,38 @@ function updatePalmBookUI() {
     leftPageCtx.fillStyle = theme.headerText;
     leftPageCtx.fillText('📖 QUANTUM XR FIELD MANUAL', lw / 2, 90);
 
-    // Live Quantum Superposition / Observer Collapse Banner
+    // Live Quantum Superposition / Observer Collapse / Eraser Status Banner
     const isObserved = state.detectorActive;
-    leftPageCtx.fillStyle = isObserved ? '#4c0519' : '#052e16';
-    leftPageCtx.strokeStyle = isObserved ? '#ff2d87' : '#10b981';
+    const isTagged = (state.polarizersActive && !state.eraserActive);
+    const isErased = (state.polarizersActive && state.eraserActive);
+
+    const bannerBg = isObserved ? '#4c0519' : isTagged ? '#451a03' : isErased ? '#064e3b' : '#052e16';
+    const bannerBorder = isObserved ? '#ff2d87' : isTagged ? '#fbbf24' : isErased ? '#34d399' : '#10b981';
+    const bannerTextCol = bannerBorder;
+
+    leftPageCtx.fillStyle = bannerBg;
+    leftPageCtx.strokeStyle = bannerBorder;
     leftPageCtx.lineWidth = 4;
     leftPageCtx.beginPath();
     leftPageCtx.roundRect(45, 148, lw - 90, 86, 12);
     leftPageCtx.fill();
     leftPageCtx.stroke();
 
-    leftPageCtx.font = 'bold 28px Outfit, sans-serif';
+    leftPageCtx.font = 'bold 27px Outfit, sans-serif';
     leftPageCtx.textAlign = 'center';
     leftPageCtx.textBaseline = 'middle';
-    const statusText = isObserved ? '👁️ OBSERVED (Wavefunction Collapsed)' : '🌊 WAVE SUPERPOSITION (Interference Active)';
+    const statusText = isObserved
+        ? '👁️ OBSERVED (Wavefunction Collapsed)'
+        : isTagged
+        ? '🪄 MARKED WHICH-WAY (|H⟩/|V⟩ Tags Active)'
+        : isErased
+        ? '✨ QUANTUM ERASER ACTIVE (45° |D⟩ Interference Revived!)'
+        : '🌊 WAVE SUPERPOSITION (Interference Active)';
+
     leftPageCtx.strokeStyle = '#000000';
     leftPageCtx.lineWidth = 5;
     leftPageCtx.strokeText(statusText, lw / 2, 191);
-    leftPageCtx.fillStyle = isObserved ? '#ff2d87' : '#10b981';
+    leftPageCtx.fillStyle = bannerTextCol;
     leftPageCtx.fillText(statusText, lw / 2, 191);
 
     // Live Experiment Telemetry Table (Solid Opaque Card for Maximum Readability)
@@ -2226,15 +2847,17 @@ function updatePalmBookUI() {
     leftPageCtx.fillStyle = theme.valColor;
     leftPageCtx.fillText('⚡ REALTIME EXPERIMENT TELEMETRY', 72, 290);
 
-    const fringeWidthMm = ((state.wavelength * 1e-9 * state.screenDistance) / (state.slitSeparation * 1e-3)) * 1000;
+    const fringeWidthMm = ((state.wavelength * 1e-9 * (state.screenDistance || 6.4)) / (state.slitSeparation * 1e-3)) * 1000;
+    const hasInterference = (!state.detectorActive && (!state.polarizersActive || state.eraserActive));
+
     const telemetryRows = [
         { label: 'TOTAL IMPACT HITS', value: `${state.totalHits.toLocaleString()}` },
         { label: 'LIGHT WAVELENGTH λ', value: `${state.wavelength} nm` },
         { label: 'SLIT SEPARATION d', value: `${state.slitSeparation.toFixed(2)} mm` },
-        { label: 'SCREEN DISTANCE D', value: `${state.screenDistance.toFixed(2)} m` },
+        { label: 'SCREEN DISTANCE D', value: `${(state.screenDistance || 6.4).toFixed(1)} m` },
         { label: 'FRINGE WIDTH β', value: `${fringeWidthMm.toFixed(2)} mm` },
-        { label: 'EMISSION MODE', value: `${state.beamMode.toUpperCase()}` },
-        { label: 'OBSERVER DETECTOR', value: state.detectorActive ? 'ACTIVE (WHICH-WAY)' : 'INACTIVE (WAVE)' }
+        { label: 'TIME DILATION', value: `${state.timeDilation === 1.0 ? '1.0x (Normal)' : state.timeDilation === 0.25 ? '0.25x' : state.timeDilation === 0.05 ? '0.05x' : 'PAUSED'}` },
+        { label: 'QUANTUM STATE', value: hasInterference ? 'WAVE COHERENCE' : 'COLLAPSED' }
     ];
 
     telemetryRows.forEach((row, idx) => {
@@ -2371,25 +2994,6 @@ function updatePalmBookUI() {
         }
     }
 
-    // Dog-ear corner fold hint (Bottom-Left corner: ◀ POKE TO FLIP)
-    leftPageCtx.save();
-    leftPageCtx.fillStyle = 'rgba(0, 240, 255, 0.25)';
-    leftPageCtx.beginPath();
-    leftPageCtx.moveTo(30, lh - 30);
-    leftPageCtx.lineTo(145, lh - 30);
-    leftPageCtx.lineTo(30, lh - 145);
-    leftPageCtx.closePath();
-    leftPageCtx.fill();
-    leftPageCtx.strokeStyle = theme.accent;
-    leftPageCtx.lineWidth = 3;
-    leftPageCtx.stroke();
-    leftPageCtx.font = 'bold 20px Outfit, sans-serif';
-    leftPageCtx.fillStyle = theme.accent;
-    leftPageCtx.textAlign = 'left';
-    leftPageCtx.textBaseline = 'middle';
-    leftPageCtx.fillText('◀ POKE', 44, lh - 55);
-    leftPageCtx.restore();
-
     // Quick VR Interaction Guide at bottom
     leftPageCtx.font = 'bold 22px Outfit, sans-serif';
     leftPageCtx.fillStyle = theme.labelColor;
@@ -2397,8 +3001,8 @@ function updatePalmBookUI() {
     leftPageCtx.textBaseline = 'middle';
     leftPageCtx.strokeStyle = '#000000';
     leftPageCtx.lineWidth = 3;
-    leftPageCtx.strokeText('Turn left palm to summon • Poke page corners, buttons, or swipe to turn', lw / 2, 1140);
-    leftPageCtx.fillText('Turn left palm to summon • Poke page corners, buttons, or swipe to turn', lw / 2, 1140);
+    leftPageCtx.strokeText('Turn left palm to summon • Use bottom buttons to turn pages', lw / 2, 1140);
+    leftPageCtx.fillText('Turn left palm to summon • Use bottom buttons to turn pages', lw / 2, 1140);
 
     leftPageTexture.needsUpdate = true;
 
@@ -2510,25 +3114,6 @@ function updatePalmBookUI() {
         rightPageCtx.fill();
     }
 
-    // Dog-ear corner fold hint (Bottom-Right corner: POKE TO FLIP ▶)
-    rightPageCtx.save();
-    rightPageCtx.fillStyle = 'rgba(0, 240, 255, 0.25)';
-    rightPageCtx.beginPath();
-    rightPageCtx.moveTo(rw - 145, rh - 30);
-    rightPageCtx.lineTo(rw - 30, rh - 145);
-    rightPageCtx.lineTo(rw - 30, rh - 30);
-    rightPageCtx.closePath();
-    rightPageCtx.fill();
-    rightPageCtx.strokeStyle = theme.accent;
-    rightPageCtx.lineWidth = 3;
-    rightPageCtx.stroke();
-    rightPageCtx.font = 'bold 20px Outfit, sans-serif';
-    rightPageCtx.fillStyle = theme.accent;
-    rightPageCtx.textAlign = 'right';
-    rightPageCtx.textBaseline = 'middle';
-    rightPageCtx.fillText('POKE ▶', rw - 44, rh - 55);
-    rightPageCtx.restore();
-
     rightPageTexture.needsUpdate = true;
 
     // Render Navigation Footer Buttons (Prev & Next)
@@ -2596,18 +3181,18 @@ function updatePalmBookButtons() {
         if (i < controls.length) {
             btnMesh.visible = true;
             const ctrl = controls[i];
-            const label = ctrl.getLabel();
+            const rawLabel = ctrl.getLabel();
             const color = ctrl.getColor();
 
             btnMesh.userData.action = ctrl.id;
-            btnMesh.userData.label = label;
+            btnMesh.userData.label = rawLabel;
 
             // Render Dynamic Button Texture
             const bctx = btnMesh.userData.ctx;
             const bw = btnMesh.userData.canvas.width;
             const bh = btnMesh.userData.canvas.height;
 
-            // 1. SOLID OPAQUE DARK PILL BASE (NO MORE TRANSLUCENT GLITCH)
+            // 1. SOLID OPAQUE DARK PILL BASE
             bctx.fillStyle = theme.btnBg;
             bctx.fillRect(0, 0, bw, bh);
 
@@ -2628,30 +3213,53 @@ function updatePalmBookButtons() {
             bctx.lineWidth = 2;
             bctx.strokeRect(7, 7, bw - 14, bh - 14);
 
-            // 3. ICON ACCENT BOX
+            // 3. ICON ACCENT BOX (Square badge on left)
+            const iconBoxW = 74;
             bctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-            bctx.fillRect(10, 10, 85, bh - 20);
+            bctx.fillRect(10, 10, iconBoxW, bh - 20);
             bctx.strokeStyle = color;
             bctx.lineWidth = 3;
-            bctx.strokeRect(10, 10, 85, bh - 20);
+            bctx.strokeRect(10, 10, iconBoxW, bh - 20);
 
-            bctx.font = 'bold 44px Outfit, sans-serif';
+            bctx.font = 'bold 38px Outfit, sans-serif';
             bctx.textAlign = 'center';
             bctx.textBaseline = 'middle';
             bctx.fillStyle = '#ffffff';
-            bctx.fillText(ctrl.icon || '⚡', 52, bh / 2);
+            bctx.fillText(ctrl.icon || '⚡', 10 + iconBoxW / 2, bh / 2);
 
-            // 4. BUTTON TITLE - BOLD WHITE TEXT WITH HEAVY BLACK OUTLINE (ALWAYS CRISP & READABLE)
-            bctx.font = 'bold 31px Outfit, sans-serif';
+            // 4. CLEAN LABEL: Strip duplicate emoji/icon from the label text so it doesn't waste width
+            let cleanText = rawLabel;
+            if (ctrl.icon && cleanText.startsWith(ctrl.icon)) {
+                cleanText = cleanText.slice(ctrl.icon.length).trim();
+            } else {
+                cleanText = cleanText.replace(/^[\p{Emoji}\uFE0F\u200D\s]+/u, '').trim();
+                if (!cleanText) cleanText = rawLabel;
+            }
+
+            // 5. DYNAMIC SHRINK-TO-FIT TYPOGRAPHY: Scale font size dynamically to fit available width perfectly
+            const textStartX = 10 + iconBoxW + 16;
+            const maxTextWidth = bw - textStartX - 16;
+
+            let fontSize = 30;
+            bctx.font = `bold ${fontSize}px Outfit, sans-serif`;
+            let textWidth = bctx.measureText(cleanText).width;
+
+            while (textWidth > maxTextWidth && fontSize > 15) {
+                fontSize -= 1;
+                bctx.font = `bold ${fontSize}px Outfit, sans-serif`;
+                textWidth = bctx.measureText(cleanText).width;
+            }
+
             bctx.textAlign = 'left';
             bctx.textBaseline = 'middle';
 
+            // High-contrast outline stroke
             bctx.strokeStyle = '#000000';
-            bctx.lineWidth = 6;
-            bctx.strokeText(label, 115, bh / 2);
+            bctx.lineWidth = 5;
+            bctx.strokeText(cleanText, textStartX, bh / 2);
 
             bctx.fillStyle = theme.btnText;
-            bctx.fillText(label, 115, bh / 2);
+            bctx.fillText(cleanText, textStartX, bh / 2);
 
             btnMesh.userData.texture.needsUpdate = true;
         } else {
@@ -2749,13 +3357,29 @@ function renderPageSnapshot(ctx, pageIdx) {
             ctx.lineWidth = 6;
             ctx.strokeRect(60, y, w - 120, 180);
 
-            ctx.font = 'bold 36px Outfit, sans-serif';
+            // Dynamic shrink-to-fit font scaling
+            let labelText = ctrl.getLabel();
+            if (ctrl.icon && labelText.startsWith(ctrl.icon)) {
+                labelText = labelText.slice(ctrl.icon.length).trim();
+            } else {
+                labelText = labelText.replace(/^[\p{Emoji}\uFE0F\u200D\s]+/u, '').trim();
+                if (!labelText) labelText = ctrl.getLabel();
+            }
+
+            const maxW = w - 180;
+            let fSize = 34;
+            ctx.font = `bold ${fSize}px Outfit, sans-serif`;
+            while (ctx.measureText(labelText).width > maxW && fSize > 18) {
+                fSize -= 1;
+                ctx.font = `bold ${fSize}px Outfit, sans-serif`;
+            }
+
             ctx.textAlign = 'center';
             ctx.strokeStyle = '#000000';
             ctx.lineWidth = 6;
-            ctx.strokeText(ctrl.getLabel(), w / 2, y + 95);
+            ctx.strokeText(labelText, w / 2, y + 95);
             ctx.fillStyle = '#ffffff';
-            ctx.fillText(ctrl.getLabel(), w / 2, y + 95);
+            ctx.fillText(labelText, w / 2, y + 95);
         }
     });
 
@@ -2903,6 +3527,94 @@ function trigger3DAction(action) {
         audio.playButtonClick('reset');
         pressButton('reset');
         updatePalmBookUI();
+    } else if (action === 'toggle-polarizers') {
+        state.polarizersActive = !state.polarizersActive;
+        audio.playQuantumEraserSound();
+        speakNarration(state.polarizersActive ? 'Which-way polarizers activated. Photons are now tagged with orthogonal states H and V. Interference collapses.' : 'Polarizers retracted.');
+        updateVisualState();
+        updatePalmBookUI();
+        checkMissionProgress();
+        return;
+    } else if (action === 'toggle-eraser') {
+        state.eraserActive = !state.eraserActive;
+        audio.playQuantumEraserSound();
+        speakNarration(state.eraserActive ? 'Diagonal forty-five degree eraser filter inserted. Which-way identity is erased, interference fringes restored!' : 'Eraser filter retracted.');
+        updateVisualState();
+        updatePalmBookUI();
+        checkMissionProgress();
+        return;
+    } else if (action === 'cycle-wavelength') {
+        const wls = state.availableWavelengths;
+        const curIdx = wls.indexOf(state.wavelength);
+        state.wavelength = wls[(curIdx + 1) % wls.length];
+        audio.playButtonClick('default');
+        speakNarration(`Laser wavelength tuned to ${state.wavelength} nanometers.`);
+        updateVisualState();
+        updatePalmBookUI();
+        return;
+    } else if (action === 'toggle-wave-packet') {
+        state.wavePacketActive = !state.wavePacketActive;
+        audio.playButtonClick('default');
+        speakNarration(state.wavePacketActive ? 'Volumetric quantum wave packet visualization engaged.' : 'Wave packet visualization disengaged.');
+        updateVisualState();
+        updatePalmBookUI();
+        return;
+    } else if (action === 'cycle-time-dilation') {
+        const dilations = [1.0, 0.25, 0.05, 0.0];
+        const curDIdx = dilations.indexOf(state.timeDilation);
+        state.timeDilation = dilations[(curDIdx + 1) % dilations.length];
+        audio.playButtonClick('default');
+        const speedText = state.timeDilation === 1.0 ? 'normal speed' : state.timeDilation === 0.25 ? 'quarter speed' : state.timeDilation === 0.05 ? 'twenty times slow-motion' : 'time suspended';
+        speakNarration(`Relativistic time dilation: ${speedText}.`);
+        updatePalmBookUI();
+        checkMissionProgress();
+        return;
+    } else if (action === 'cycle-slit-sep') {
+        const seps = state.availableSlitSeparations;
+        const curSIdx = seps.indexOf(state.slitSeparation);
+        state.slitSeparation = seps[(curSIdx + 1) % seps.length];
+        audio.playButtonClick('default');
+        speakNarration(`Slit separation d adjusted to ${state.slitSeparation} millimeters.`);
+        updateVisualState();
+        updatePalmBookUI();
+        return;
+    } else if (action === 'cycle-screen-dist') {
+        const dists = state.availableScreenDistances;
+        const curDistIdx = dists.indexOf(state.screenDistance || 6.4);
+        state.screenDistance = dists[(curDistIdx + 1) % dists.length];
+        audio.playButtonClick('default');
+        speakNarration(`Screen distance D adjusted to ${state.screenDistance} meters.`);
+        updateVisualState();
+        updatePalmBookUI();
+        return;
+    } else if (action === 'toggle-inspection-lens') {
+        state.lensActive = !state.lensActive;
+        audio.playButtonClick('default');
+        speakNarration(state.lensActive ? 'Quantum inspection lens active. Wavefunction probability density displayed.' : 'Inspection lens stowed.');
+        updateVisualState();
+        updatePalmBookUI();
+        return;
+    } else if (action === 'toggle-narrator') {
+        state.narratorEnabled = !state.narratorEnabled;
+        audio.playButtonClick('default');
+        if (state.narratorEnabled) speakNarration('Dr. Quantum laboratory narration online.');
+        updatePalmBookUI();
+        return;
+    } else if (action === 'chalkboard-next-step') {
+        state.chalkboardStep = (state.chalkboardStep + 1) % 4;
+        audio.playButtonClick('default');
+        renderChalkboardCanvas();
+        const stepTitles = ['Youngs Classical Double Slit', 'Heisenberg Uncertainty and Measurement', 'Feynman Sum Over Paths', 'Delayed Choice Quantum Eraser'];
+        speakNarration(`Chalkboard derivation: ${stepTitles[state.chalkboardStep]}`);
+        updatePalmBookUI();
+        return;
+    } else if (action === 'mission-wave' || action === 'mission-observer' || action === 'mission-eraser' || action === 'mission-bullet') {
+        audio.playButtonClick('default');
+        const m = state.missions.find(item => item.id === action.replace('mission-', ''));
+        if (m) {
+            speakNarration(`Mission: ${m.title}. ${m.desc}. Status: ${m.completed ? 'Badge Earned!' : 'In progress.'}`);
+        }
+        return;
     }
 
     // Tactile button bounce on book
@@ -3346,66 +4058,58 @@ function updatePalmBook(delta, elapsedTime) {
                 if (isContactingPlane && isWithinBookBounds && directTouchCooldown <= 0) {
                     let pokeHit = false;
 
-                    // A. NEXT PAGE POKE (Poking NEXT button OR Right Page Dog-Ear / Outer Margin)
-                    const isNextBtnPoke = (localTip.x >= 0.075 && localTip.x <= 0.155 && localTip.y >= -0.108 && localTip.y <= -0.065);
-                    const isRightCornerPoke = (localTip.x > 0.055 && localTip.y < -0.065);
-                    const isRightEdgePoke = (localTip.x > 0.125 && Math.abs(localTip.y) < 0.10);
+                    // 1. 3D ACTIVE CONTROL BUTTONS (Right Page 4 Control Slots - prioritized so clicking buttons at the top activates the control)
+                    for (const btn of pageButtonMeshes) {
+                        if (!btn.visible || !btn.userData || !btn.userData.action) continue;
+                        const dx = Math.abs(localTip.x - btn.position.x);
+                        const dy = Math.abs(localTip.y - btn.position.y);
+                        if (dx < 0.072 && dy < 0.019) {
+                            btn.userData.targetZ = btn.userData.baseZ - 0.005;
+                            setTimeout(() => {
+                                if (btn.userData) btn.userData.targetZ = btn.userData.baseZ;
+                            }, 140);
 
-                    if (isNextBtnPoke || isRightCornerPoke || isRightEdgePoke) {
-                        flipToNextPage();
-                        triggerPokeHaptics();
-                        if (nextBtnMesh && nextBtnMesh.userData) {
-                            nextBtnMesh.userData.targetZ = nextBtnMesh.userData.baseZ - 0.005;
-                            setTimeout(() => { if (nextBtnMesh) nextBtnMesh.userData.targetZ = nextBtnMesh.userData.baseZ; }, 140);
+                            trigger3DAction(btn.userData.action);
+                            triggerPokeHaptics();
+                            directTouchCooldown = 0.35;
+                            pokeHit = true;
+                            break;
                         }
-                        directTouchCooldown = 0.38;
-                        pokeHit = true;
                     }
 
-                    // B. PREVIOUS PAGE POKE (Poking PREV button OR Left Page Dog-Ear / Outer Margin)
-                    if (!pokeHit) {
-                        const isPrevBtnPoke = (localTip.x >= 0.005 && localTip.x <= 0.072 && localTip.y >= -0.108 && localTip.y <= -0.065);
-                        const isLeftCornerPoke = (localTip.x < -0.055 && localTip.y < -0.065);
-                        const isLeftEdgePoke = (localTip.x < -0.125 && Math.abs(localTip.y) < 0.10);
-
-                        if (isPrevBtnPoke || isLeftCornerPoke || isLeftEdgePoke) {
-                            flipToPrevPage();
+                    // 2. NEXT PAGE POKE (STRICTLY Poking the NEXT Button at the Bottom of the Page)
+                    if (!pokeHit && nextBtnMesh && nextBtnMesh.visible) {
+                        const dxNext = Math.abs(localTip.x - nextBtnMesh.position.x);
+                        const dyNext = Math.abs(localTip.y - nextBtnMesh.position.y);
+                        if (dxNext < 0.035 && dyNext < 0.018) {
+                            flipToNextPage();
                             triggerPokeHaptics();
-                            if (prevBtnMesh && prevBtnMesh.userData) {
-                                prevBtnMesh.userData.targetZ = prevBtnMesh.userData.baseZ - 0.005;
-                                setTimeout(() => { if (prevBtnMesh) prevBtnMesh.userData.targetZ = prevBtnMesh.userData.baseZ; }, 140);
-                            }
+                            nextBtnMesh.userData.targetZ = nextBtnMesh.userData.baseZ - 0.005;
+                            setTimeout(() => { if (nextBtnMesh) nextBtnMesh.userData.targetZ = nextBtnMesh.userData.baseZ; }, 140);
                             directTouchCooldown = 0.38;
                             pokeHit = true;
                         }
                     }
 
-                    // C. 3D ACTIVE CONTROL BUTTONS (Right Page 4 Control Slots)
-                    if (!pokeHit) {
-                        for (const btn of pageButtonMeshes) {
-                            if (!btn.visible || !btn.userData || !btn.userData.action) continue;
-                            const dx = Math.abs(localTip.x - btn.position.x);
-                            const dy = Math.abs(localTip.y - btn.position.y);
-                            if (dx < 0.072 && dy < 0.019) {
-                                btn.userData.targetZ = btn.userData.baseZ - 0.005;
-                                setTimeout(() => {
-                                    if (btn.userData) btn.userData.targetZ = btn.userData.baseZ;
-                                }, 140);
-
-                                trigger3DAction(btn.userData.action);
-                                triggerPokeHaptics();
-                                directTouchCooldown = 0.35;
-                                pokeHit = true;
-                                break;
-                            }
+                    // 3. PREVIOUS PAGE POKE (STRICTLY Poking the PREV Button at the Bottom of the Page)
+                    if (!pokeHit && prevBtnMesh && prevBtnMesh.visible) {
+                        const dxPrev = Math.abs(localTip.x - prevBtnMesh.position.x);
+                        const dyPrev = Math.abs(localTip.y - prevBtnMesh.position.y);
+                        if (dxPrev < 0.035 && dyPrev < 0.018) {
+                            flipToPrevPage();
+                            triggerPokeHaptics();
+                            prevBtnMesh.userData.targetZ = prevBtnMesh.userData.baseZ - 0.005;
+                            setTimeout(() => { if (prevBtnMesh) prevBtnMesh.userData.targetZ = prevBtnMesh.userData.baseZ; }, 140);
+                            directTouchCooldown = 0.38;
+                            pokeHit = true;
                         }
                     }
 
-                    // D. PIN BOOK BUTTON (Left Page Bottom)
+                    // 4. PIN BOOK BUTTON (Left Page Bottom)
                     if (!pokeHit && pinBtnMesh && pinBtnMesh.visible) {
-                        const dx = Math.abs(localTip.x - pinBtnMesh.position.x);
-                        const dy = Math.abs(localTip.y - pinBtnMesh.position.y);
-                        if (dx < 0.072 && dy < 0.016) {
+                        const dxPin = Math.abs(localTip.x - pinBtnMesh.position.x);
+                        const dyPin = Math.abs(localTip.y - pinBtnMesh.position.y);
+                        if (dxPin < 0.072 && dyPin < 0.016) {
                             pinBtnMesh.userData.targetZ = pinBtnMesh.userData.baseZ - 0.005;
                             setTimeout(() => {
                                 if (pinBtnMesh.userData) pinBtnMesh.userData.targetZ = pinBtnMesh.userData.baseZ;
@@ -3417,27 +4121,6 @@ function updatePalmBook(delta, elapsedTime) {
                             pokeHit = true;
                         }
                     }
-                }
-
-                // E. SWIPE / DRAG INTERACTION (Flicking across the page)
-                if (isContactingPlane && isWithinBookBounds) {
-                    if (lastPokeLocalX !== null && directTouchCooldown <= 0) {
-                        const deltaX = localTip.x - lastPokeLocalX;
-                        if (deltaX < -0.038) {
-                            // Swiped Leftwards -> Turn to Next Page
-                            flipToNextPage();
-                            triggerPokeHaptics();
-                            directTouchCooldown = 0.42;
-                        } else if (deltaX > 0.038) {
-                            // Swiped Rightwards -> Turn to Previous Page
-                            flipToPrevPage();
-                            triggerPokeHaptics();
-                            directTouchCooldown = 0.42;
-                        }
-                    }
-                    lastPokeLocalX = localTip.x;
-                } else {
-                    lastPokeLocalX = null;
                 }
 
                 if (cursorActive) break; // processed closest interacting pointer
@@ -4132,6 +4815,24 @@ renderer.setAnimationLoop(() => {
 
     // 3. Dynamic Particle Simulation
     updateParticles(delta);
+
+    // 3b. Animate Volumetric Wave Packet Ripples
+    if (wavePacketGroup && wavePacketGroup.visible) {
+        const effSpeed = elapsedTime * (state.timeDilation > 0 ? 3.5 * state.timeDilation : 0);
+        waveShells.forEach((shell, idx) => {
+            const baseR = 0.2 + idx * 0.45;
+            const pulse = Math.sin(effSpeed - idx * 0.8) * 0.08;
+            const curR = baseR + pulse;
+            shell.scale.set(curR, curR, curR);
+            shell.material.color.setHex(state.detectorActive ? 0xff2d87 : wavelengthToHex(state.wavelength));
+            shell.material.opacity = Math.max(0.05, 0.42 - (idx / waveShells.length) * 0.32);
+        });
+    }
+
+    // 3c. Animate Handheld Inspection Lens Floating Hover
+    if (inspectionLensMesh && inspectionLensMesh.visible) {
+        inspectionLensMesh.position.y = (OPTICAL_AXIS_Y + 0.65) + Math.sin(elapsedTime * 2.2) * 0.012;
+    }
 
     // 4. Animate Holographic Teleport Pads
     updateTeleportPads(delta, elapsedTime);
