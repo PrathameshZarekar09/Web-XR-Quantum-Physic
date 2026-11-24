@@ -16,11 +16,11 @@ import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 // - Console Buttons Height = 1.78 * 0.70 = 1.25m (natural arm-reach height for hands/controllers)
 const LAB_SCALE = 0.70;
 const OPTICAL_AXIS_Y = 2.10;
-const Y_SHIFT_SLITS = OPTICAL_AXIS_Y - 2.70; // -0.60m vertical offset to align slits with optical axis
-const Y_SHIFT_SCREEN = OPTICAL_AXIS_Y - 2.70; // -0.60m vertical offset to align screen with optical axis
-const SCREEN_X = 6.40;
-const SCREEN_FACE_X = SCREEN_X - 0.12; // Front phosphor surface facing beam
-const dx = SCREEN_X - 5.30; // separation offset from original GLB position
+const Y_SHIFT_SLITS = 0;  // Slits in updated YDSE1.glb are aligned with optical axis
+const Y_SHIFT_SCREEN = 0; // Screen in updated YDSE1.glb is aligned with optical axis
+const SCREEN_X = 5.30;
+const SCREEN_FACE_X = SCREEN_X - 0.065; // Front phosphor surface (Screen_PhosphorSurface) facing beam
+const dx = 0; // DetectionScreenAssembly sits directly on the optical bench guide rails
 
 // =============================================================================
 // QUANTUM SIMULATION STATE
@@ -455,7 +455,7 @@ scene.add(consoleSpot.target);
 
 // Dynamic Accent Lights focused on Emitter, Detector, and Screen Face
 const emitterLight = new THREE.PointLight(0x00f0ff, 2.8, 4.5 * LAB_SCALE);
-emitterLight.position.set(-3.12 * LAB_SCALE, OPTICAL_AXIS_Y * LAB_SCALE, 0);
+emitterLight.position.set(-2.99 * LAB_SCALE, OPTICAL_AXIS_Y * LAB_SCALE, 0);
 scene.add(emitterLight);
 
 const detectorLight = new THREE.PointLight(0xff2d87, 0, 4.0 * LAB_SCALE);
@@ -477,15 +477,60 @@ scene.add(screenGlowLight);
 // UNIFIED LASER COLOR (CONSISTENT LASER GREEN AS IN REFERENCE IMAGE)
 // =============================================================================
 function wavelengthToRGB(wl) {
-    if (wl <= 430) {
-        return { r: 168, g: 85, b: 247, hex: 0xa855f7, name: 'Royal Violet' };
-    } else if (wl <= 505) {
-        return { r: 0, g: 240, b: 255, hex: 0x00f0ff, name: 'Cyan Blue' };
-    } else if (wl <= 580) {
-        return { r: 0, g: 255, b: 136, hex: 0x00ff88, name: 'Emerald Green' };
+    let r = 0, g = 0, b = 0;
+    if (wl >= 380 && wl < 440) {
+        r = -(wl - 440) / (440 - 380);
+        g = 0.0;
+        b = 1.0;
+    } else if (wl >= 440 && wl < 490) {
+        r = 0.0;
+        g = (wl - 440) / (490 - 440);
+        b = 1.0;
+    } else if (wl >= 490 && wl < 510) {
+        r = 0.0;
+        g = 1.0;
+        b = -(wl - 510) / (510 - 490);
+    } else if (wl >= 510 && wl < 580) {
+        r = (wl - 510) / (580 - 510);
+        g = 1.0;
+        b = 0.0;
+    } else if (wl >= 580 && wl < 645) {
+        r = 1.0;
+        g = -(wl - 645) / (645 - 580);
+        b = 0.0;
+    } else if (wl >= 645 && wl <= 750) {
+        r = 1.0;
+        g = 0.0;
+        b = 0.0;
+    } else if (wl < 380) {
+        r = 0.66; g = 0.33; b = 0.97;
     } else {
-        return { r: 255, g: 50, b: 60, hex: 0xff323c, name: 'Ruby Red' };
+        r = 1.0; g = 0.15; b = 0.15;
     }
+
+    // Intensity roll-off near UV/IR edges
+    let factor = 1.0;
+    if (wl >= 380 && wl < 420) {
+        factor = 0.45 + 0.55 * (wl - 380) / (420 - 380);
+    } else if (wl > 700 && wl <= 750) {
+        factor = 0.45 + 0.55 * (750 - wl) / (750 - 700);
+    }
+
+    const ri = Math.round(Math.min(255, Math.max(0, r * factor * 255)));
+    const gi = Math.round(Math.min(255, Math.max(0, g * factor * 255)));
+    const bi = Math.round(Math.min(255, Math.max(0, b * factor * 255)));
+    const hex = (ri << 16) | (gi << 8) | bi;
+
+    let name = 'Visible Laser';
+    if (wl <= 440) name = 'Royal Violet';
+    else if (wl <= 490) name = 'Cobalt Blue';
+    else if (wl <= 510) name = 'Cyan';
+    else if (wl <= 565) name = 'Emerald Green';
+    else if (wl <= 595) name = 'Amber Yellow';
+    else if (wl <= 630) name = 'Laser Orange';
+    else name = 'Ruby Red';
+
+    return { r: ri, g: gi, b: bi, hex, name };
 }
 
 function wavelengthToHex(wl) {
@@ -722,6 +767,8 @@ const buttonNodes = {
     switch: null,
     detectorStatus: null,
     beam: null,
+    beamHalo: null,
+    emitterGlows: [],
     slitGlows: [],
     bands: []
 };
@@ -774,67 +821,10 @@ loader.load(
         // Add particle system directly to modelRoot so all particle positions share local lab coordinates
         modelRoot.add(particleGroup);
 
-        // High-Tech Laboratory Floor Pedestal for the Screen Station
-        const screenPedestalGroup = new THREE.Group();
-        screenPedestalGroup.position.set(SCREEN_X, 0, 0);
-
-        const pedestalMat = new THREE.MeshStandardMaterial({
-            color: 0x182030,
-            metalness: 0.75,
-            roughness: 0.35
-        });
-
-        // Ground Base Plate
-        const basePlate = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.12, 1.9), pedestalMat);
-        basePlate.position.set(0, 0.06, 0);
-        basePlate.receiveShadow = true;
-        basePlate.castShadow = true;
-        screenPedestalGroup.add(basePlate);
-
-        // Dual Heavy Vertical Support Columns (solid connection from base plate to screen stand base at y = 0.55m)
-        const pillarMat = new THREE.MeshStandardMaterial({
-            color: 0x223046,
-            metalness: 0.8,
-            roughness: 0.25
-        });
-        const leftPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.43, 24), pillarMat);
-        leftPillar.position.set(0, 0.335, -0.5);
-        leftPillar.castShadow = true;
-        const rightPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.43, 24), pillarMat);
-        rightPillar.position.set(0, 0.335, 0.5);
-        rightPillar.castShadow = true;
-        screenPedestalGroup.add(leftPillar);
-        screenPedestalGroup.add(rightPillar);
-
-        // Floor Glowing Alignment Ring
-        const floorRing = new THREE.Mesh(
-            new THREE.RingGeometry(0.88, 0.96, 36).rotateX(-Math.PI / 2),
-            new THREE.MeshBasicMaterial({
-                color: 0x00ff88,
-                transparent: true,
-                opacity: 0.55,
-                side: THREE.DoubleSide
-            })
-        );
-        floorRing.position.set(0, 0.005, 0);
-        screenPedestalGroup.add(floorRing);
-
-        modelRoot.add(screenPedestalGroup);
-
         modelRoot.traverse((child) => {
             if (child.isMesh) {
                 child.castShadow = true;
                 child.receiveShadow = true;
-
-                // 1. OPTICAL AXIS ALIGNMENT (Vertical Y-Shift)
-                // Bring Double Slits down (-0.60m) so slit apertures align with Emitter nozzle (y = 2.10m)
-                if (child.name === 'Slit_Base' || child.name.startsWith('Barrier_') || child.name.startsWith('Slit_Frame_') || child.name.startsWith('SlitGlow_') || child.name === 'Slit_Label') {
-                    child.position.y += Y_SHIFT_SLITS;
-                }
-                // Bring Phosphor Screen and frame down (-0.60m) so screen center aligns with beam impact (y = 2.10m)
-                else if (child.name === 'Screen_Panel' || child.name === 'Screen_Stand' || child.name.startsWith('Screen_Frame_') || child.name.startsWith('InterferenceBand_') || child.name === 'Screen_Label') {
-                    child.position.y += Y_SHIFT_SCREEN;
-                }
 
                 // Enhanced PBR Materials: Ensure rich lighting, reflection, and visible contrast
                 if (child.material) {
@@ -855,7 +845,7 @@ loader.load(
                     }
                 }
 
-                // 2. INTERACTIVE BUTTONS & APPARATUS NODES
+                // INTERACTIVE BUTTONS & APPARATUS NODES
                 if (child.name === 'BTN_EMITTER') {
                     buttonNodes.emitter = child;
                     buttonAnimState.emitter.baseY = child.position.y;
@@ -871,30 +861,22 @@ loader.load(
                     buttonAnimState.reset.baseY = child.position.y;
                     child.userData = { action: 'reset-screen', label: 'Clear Screen Data (R)' };
                     interactiveObjects.push(child);
-                } else if (child.name === 'Emitter_Switch') {
+                } else if (child.name === 'Emitter_SwitchBox' || child.name === 'Emitter_Switch') {
                     buttonNodes.switch = child;
                     child.userData = { action: 'toggle-emitter', label: 'Emitter Switch' };
                     interactiveObjects.push(child);
-                } else if (child.name === 'Screen_Panel') {
+                } else if (child.name === 'Screen_PhosphorSurface' || child.name === 'Screen_Panel') {
                     // Dynamic phosphor canvas texture
                     child.material = screenMaterial;
                     child.castShadow = false;
-                    child.position.x = SCREEN_X;
-                } else if (child.name === 'Screen_Stand') {
-                    child.position.x = SCREEN_X;
-                } else if (child.name.startsWith('Screen_Frame_')) {
-                    // Outer framing flush with screen panel front edge
-                    child.position.x = 5.16 + dx;
-                } else if (child.name === 'Screen_Label') {
-                    child.position.x = 4.95 + dx;
-                } else if (child.name === 'Detector_Status') {
+                } else if (child.name === 'Detector_StatusBeacon' || child.name === 'Detector_Status') {
                     buttonNodes.detectorStatus = child;
                     child.material = new THREE.MeshStandardMaterial({
                         color: 0x333333,
                         emissive: 0x220011,
                         roughness: 0.2
                     });
-                } else if (child.name === 'QuantumBeam_Main') {
+                } else if (child.name === 'QuantumBeam_Incident' || child.name === 'QuantumBeam_Main') {
                     buttonNodes.beam = child;
                     child.material = new THREE.MeshBasicMaterial({
                         color: 0x00ff88,
@@ -902,10 +884,21 @@ loader.load(
                         opacity: 0.5,
                         blending: THREE.AdditiveBlending
                     });
-                    // Perfectly position & scale laser cylinder from Emitter aperture (-3.12m) to Phosphor Screen Face (SCREEN_FACE_X)
-                    const beamLength = SCREEN_FACE_X - (-3.12);
-                    child.position.set((-3.12 + SCREEN_FACE_X) / 2, OPTICAL_AXIS_Y, 0);
-                    child.scale.set(1, beamLength / 8.44, 1);
+                } else if (child.name === 'QuantumBeam_Halo') {
+                    buttonNodes.beamHalo = child;
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: 0x00ff88,
+                        transparent: true,
+                        opacity: 0.18,
+                        blending: THREE.AdditiveBlending,
+                        depthWrite: false
+                    });
+                } else if (
+                    child.name === 'Electron_SourceCore' ||
+                    child.name === 'Emitter_ApertureBead' ||
+                    child.name === 'Emitter_StatusLED'
+                ) {
+                    buttonNodes.emitterGlows.push(child);
                 } else if (child.name.startsWith('SlitGlow_')) {
                     buttonNodes.slitGlows.push(child);
                     child.material = new THREE.MeshBasicMaterial({
@@ -927,8 +920,13 @@ loader.load(
                     child.position.x = SCREEN_FACE_X - 0.002;
                     child.renderOrder = 3;
                     child.visible = true;
-                } else if (child.name.startsWith('Electron_') || child.name.startsWith('WavePath_')) {
-                    // Hide static blender preview placeholder meshes in favor of our dynamic particle system
+                } else if (
+                    child.name.startsWith('Electron_Incident_') ||
+                    child.name.startsWith('Wavefront_S') ||
+                    child.name.startsWith('ProbRay_S') ||
+                    child.name.startsWith('WavePath_')
+                ) {
+                    // Hide static blender preview placeholder meshes in favor of our dynamic particle & wave systems
                     child.visible = false;
                 }
             }
@@ -1145,7 +1143,8 @@ const wavelengthMatMap = {
 };
 
 function getWavelengthMaterial(wl) {
-    return wavelengthMatMap[wl] || waveMat;
+    waveMat.color.setHex(wavelengthToHex(wl));
+    return waveMat;
 }
 
 for (let i = 0; i < MAX_ACTIVE_PARTICLES; i++) {
@@ -1243,8 +1242,8 @@ function spawnParticle() {
     }
     p.mesh.visible = true;
 
-    // Emitter Aperture Position: x = -3.12, y = OPTICAL_AXIS_Y, z = 0
-    p.mesh.position.set(-3.12, OPTICAL_AXIS_Y, 0);
+    // Emitter Aperture Position: x = -2.99, y = OPTICAL_AXIS_Y, z = 0
+    p.mesh.position.set(-2.99, OPTICAL_AXIS_Y, 0);
 }
 
 function updateParticles(delta) {
@@ -1267,7 +1266,7 @@ function updateParticles(delta) {
     const hasInterference = (!state.detectorActive && (!state.polarizersActive || state.eraserActive));
 
     // Update active particles along 3-stage path:
-    // Stage 1: Emitter (x = -3.12) -> Slit Barrier (x = 0)
+    // Stage 1: Emitter (x = -2.99) -> Slit Barrier (x = 0)
     // Stage 2: Slit Barrier (x = 0) -> Screen Face (x = SCREEN_FACE_X)
     for (let i = 0; i < particlesPool.length; i++) {
         const p = particlesPool[i];
@@ -1285,7 +1284,7 @@ function updateParticles(delta) {
         }
 
         let posX, posY, posZ;
-        const xEmitter = -3.12;
+        const xEmitter = -2.99;
         const xSlits = 0.0;
         const xScreen = SCREEN_FACE_X;
 
@@ -1581,12 +1580,28 @@ function updateVisualState() {
     // Wavelength Color Map
     const colorHex = wavelengthToHex(state.wavelength);
     const hasInterference = (!state.detectorActive && (!state.polarizersActive || state.eraserActive));
+    waveMat.color.setHex(colorHex);
 
     if (buttonNodes.beam) {
         buttonNodes.beam.visible = state.emitterActive;
         buttonNodes.beam.material.color.set(state.detectorActive ? 0xff2d87 : colorHex);
         buttonNodes.beam.material.opacity = state.emitterActive ? 0.45 : 0;
     }
+    if (buttonNodes.beamHalo) {
+        buttonNodes.beamHalo.visible = state.emitterActive;
+        buttonNodes.beamHalo.material.color.set(state.detectorActive ? 0xff2d87 : colorHex);
+    }
+
+    buttonNodes.emitterGlows.forEach(node => {
+        if (!node.material) return;
+        if (node.material.emissive) {
+            node.material.emissive.setHex(state.emitterActive ? colorHex : 0x111111);
+            node.material.emissiveIntensity = state.emitterActive ? 1.2 : 0.1;
+        }
+        if (node.material.color) {
+            node.material.color.setHex(state.emitterActive ? colorHex : 0x222222);
+        }
+    });
 
     buttonNodes.slitGlows.forEach(glow => {
         glow.visible = state.emitterActive;
@@ -1609,14 +1624,23 @@ function updateVisualState() {
     }
 
     if (screenMaterial) {
-        screenMaterial.emissive.set(state.detectorActive ? 0x2b0515 : (state.emitterActive ? 0x003318 : 0x000000));
+        if (state.detectorActive) {
+            screenMaterial.emissive.setHex(0x2b0515);
+        } else if (state.emitterActive) {
+            screenMaterial.emissive.setHex(colorHex).multiplyScalar(0.2);
+        } else {
+            screenMaterial.emissive.setHex(0x000000);
+        }
         screenMaterial.emissiveIntensity = state.emitterActive ? 0.95 : 0.05;
     }
     updateScreenTexture();
 
     // Dynamic Lights
     emitterLight.intensity = state.emitterActive ? 2.8 : 0;
-    emitterLight.color.set(colorHex);
+    emitterLight.color.setHex(colorHex);
+
+    screenGlowLight.intensity = state.emitterActive ? 1.6 : 0;
+    screenGlowLight.color.setHex(state.detectorActive ? 0xff2d87 : colorHex);
 
     detectorLight.intensity = state.detectorActive ? 3.5 : 0;
     if (buttonNodes.detectorStatus) {
